@@ -1,0 +1,6 @@
+# Conversation states stored in context.user_data["state"]
+IDLE = "idle"
+WAIT_URL = "wait_url"
+WAIT_FILE = "wait_file"
+ADMIN_SEARCH = "admin_search"
+ADMIN_VIEW_USER = "admin_view_user"

@@ -1,0 +1,73 @@
+from telegram import InlineKeyboardButton as Btn, InlineKeyboardMarkup as Markup
+
+
+def main_menu() -> Markup:
+    return Markup([
+        [Btn("👤 حساب کاربری من", callback_data="account")],
+        [
+            Btn("🔗 آپلود با لینک", callback_data="upload_link"),
+            Btn("📤 آپلود فایل", callback_data="upload_file"),
+        ],
+        [Btn("📁 مدیریت فایل‌های آپلود‌شده", callback_data="files:0")],
+    ])
+
+
+def check_membership(channels: list[dict]) -> Markup:
+    """channels: list of {"title": str, "url": str}"""
+    buttons = [[Btn(f"📢 {ch['title']}", url=ch["url"])] for ch in channels]
+    buttons.append([Btn("✅ عضو شدم، بررسی کن", callback_data="check_join")])
+    return Markup(buttons)
+
+
+def back_to_menu() -> Markup:
+    return Markup([[Btn("🏠 منوی اصلی", callback_data="main_menu")]])
+
+
+def cancel_and_menu() -> Markup:
+    return Markup([[Btn("❌ انصراف", callback_data="main_menu")]])
+
+
+def account_menu(has_drive: bool) -> Markup:
+    rows = []
+    if has_drive:
+        rows.append([Btn("🔌 قطع اتصال گوگل درایو", callback_data="disconnect_drive")])
+    rows.append([Btn("🏠 منوی اصلی", callback_data="main_menu")])
+    return Markup(rows)
+
+
+def files_nav(offset: int, total: int, page_size: int = 10) -> Markup:
+    rows = []
+    nav = []
+    if offset > 0:
+        nav.append(Btn("◀️ قبلی", callback_data=f"files:{offset - page_size}"))
+    if offset + page_size < total:
+        nav.append(Btn("▶️ بعدی", callback_data=f"files:{offset + page_size}"))
+    if nav:
+        rows.append(nav)
+    rows.append([Btn("🏠 منوی اصلی", callback_data="main_menu")])
+    return Markup(rows)
+
+
+def admin_menu() -> Markup:
+    return Markup([
+        [Btn("🔍 جستجوی کاربر", callback_data="admin:search")],
+        [Btn("📊 آمار کلی", callback_data="admin:stats")],
+        [Btn("🏠 منوی اصلی", callback_data="main_menu")],
+    ])
+
+
+def admin_user_actions(user_id: int, is_blocked: bool) -> Markup:
+    block_label = "✅ رفع مسدودیت" if is_blocked else "🚫 مسدود کردن"
+    block_cb = f"admin:unblock:{user_id}" if is_blocked else f"admin:block:{user_id}"
+    return Markup([
+        [Btn(block_label, callback_data=block_cb)],
+        [Btn("🔙 جستجوی دیگر", callback_data="admin:search")],
+        [Btn("🏠 منوی اصلی", callback_data="main_menu")],
+    ])
+
+
+def connect_drive(auth_url: str) -> Markup:
+    return Markup([
+        [Btn("🔗 اتصال به گوگل درایو", url=auth_url)],
+        [Btn("❌ انصراف", callback_data="main_menu")],
+    ])

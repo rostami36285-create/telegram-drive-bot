@@ -1,141 +1,126 @@
 #!/usr/bin/env bash
 # ============================================================
 #  Telegram Drive Bot — One-line installer for Linux servers
-#  Usage:
-#    curl -fsSL https://raw.githubusercontent.com/GITHUB_USER/telegram-drive-bot/main/install.sh | bash
-#  Or clone the repo and run:
-#    bash install.sh
+#
+#  Usage (fresh install):
+#    curl -fsSL https://raw.githubusercontent.com/rostami36285-create/telegram-drive-bot/main/install.sh | sudo bash
+#
+#  Update existing install:
+#    sudo bash /opt/telegram-drive-bot/install.sh
 # ============================================================
 set -euo pipefail
 
-RED='\033[0;31m'; GREEN='\033[0;32m'; YELLOW='\033[1;33m'; CYAN='\033[0;36m'; NC='\033[0m'
-info()    { echo -e "${CYAN}[INFO]${NC}  $*"; }
-success() { echo -e "${GREEN}[OK]${NC}    $*"; }
-warn()    { echo -e "${YELLOW}[WARN]${NC}  $*"; }
-die()     { echo -e "${RED}[ERROR]${NC} $*" >&2; exit 1; }
+RED='\033[0;31m'; GREEN='\033[0;32m'; YELLOW='\033[1;33m'
+CYAN='\033[0;36m'; BOLD='\033[1m'; NC='\033[0m'
+
+info()    { echo -e "${CYAN}[•]${NC} $*"; }
+success() { echo -e "${GREEN}[✓]${NC} $*"; }
+warn()    { echo -e "${YELLOW}[!]${NC} $*"; }
+die()     { echo -e "${RED}[✗]${NC} $*" >&2; exit 1; }
+ask()     { echo -en "${BOLD}${1}${NC} "; }
 
 INSTALL_DIR="${INSTALL_DIR:-/opt/telegram-drive-bot}"
-SERVICE_NAME="telegram-drive-bot"
+SERVICE="telegram-drive-bot"
 REPO_URL="https://github.com/rostami36285-create/telegram-drive-bot.git"
-PYTHON_MIN="3.10"
 
-# ── Root check ──────────────────────────────────────────────
-if [[ $EUID -ne 0 ]]; then
-  die "این اسکریپت نیاز به دسترسی root دارد. با sudo اجرا کنید."
-fi
+# ── Root check ───────────────────────────────────────────────
+[[ $EUID -ne 0 ]] && die "با sudo اجرا کنید: sudo bash install.sh"
 
 echo ""
-echo -e "${CYAN}╔══════════════════════════════════════════╗${NC}"
-echo -e "${CYAN}║   Telegram Drive Bot — Installer         ║${NC}"
-echo -e "${CYAN}╚══════════════════════════════════════════╝${NC}"
+echo -e "${CYAN}╔══════════════════════════════════════════════╗${NC}"
+echo -e "${CYAN}║   🤖 Telegram Drive Bot — نصب‌کننده          ║${NC}"
+echo -e "${CYAN}╚══════════════════════════════════════════════╝${NC}"
 echo ""
 
-# ── Detect OS ───────────────────────────────────────────────
-if [[ -f /etc/os-release ]]; then
-  . /etc/os-release
-  OS_ID="$ID"
-else
-  die "سیستم‌عامل شناخته‌شده نیست."
-fi
+# ── Detect distro ────────────────────────────────────────────
+[[ -f /etc/os-release ]] && . /etc/os-release || die "توزیع لینوکس شناخته نشد."
+info "سیستم‌عامل: ${PRETTY_NAME:-$ID}"
 
-info "سیستم‌عامل: $PRETTY_NAME"
-
-# ── Install system dependencies ─────────────────────────────
+# ── System packages ───────────────────────────────────────────
 info "نصب پیش‌نیازهای سیستم..."
-case "$OS_ID" in
+case "${ID:-}" in
   ubuntu|debian)
     apt-get update -qq
     apt-get install -y -qq python3 python3-pip python3-venv git curl 2>/dev/null
     ;;
-  centos|rhel|fedora|rocky|almalinux)
-    if command -v dnf &>/dev/null; then
-      dnf install -y python3 python3-pip git curl 2>/dev/null
-    else
-      yum install -y python3 python3-pip git curl 2>/dev/null
-    fi
+  centos|rhel|rocky|almalinux|fedora)
+    cmd=$(command -v dnf &>/dev/null && echo dnf || echo yum)
+    $cmd install -y python3 python3-pip git curl 2>/dev/null
     ;;
-  arch)
-    pacman -Sy --noconfirm python python-pip git curl 2>/dev/null
-    ;;
-  *)
-    warn "توزیع ناشناخته ($OS_ID). نصب پیش‌نیازها را به‌صورت دستی انجام دهید."
-    ;;
+  arch) pacman -Sy --noconfirm python python-pip git curl 2>/dev/null ;;
+  *)    warn "توزیع '$ID' ناشناخته — پیش‌نیازها را دستی نصب کنید." ;;
 esac
 success "پیش‌نیازهای سیستم نصب شد."
 
-# ── Check Python version ─────────────────────────────────────
-PYTHON_BIN=$(command -v python3 || command -v python || die "Python یافت نشد.")
-PY_VER=$("$PYTHON_BIN" -c "import sys; print(f'{sys.version_info.major}.{sys.version_info.minor}')")
-if python3 -c "import sys; sys.exit(0 if sys.version_info >= (3,10) else 1)" 2>/dev/null; then
-  success "Python $PY_VER یافت شد."
-else
-  die "Python $PYTHON_MIN یا بالاتر مورد نیاز است. نسخه فعلی: $PY_VER"
-fi
+# ── Python version check ─────────────────────────────────────
+PY=$(command -v python3 || command -v python || die "Python یافت نشد.")
+$PY -c "import sys; sys.exit(0 if sys.version_info>=(3,10) else 1)" \
+  || die "Python 3.10 یا بالاتر لازم است. نسخه فعلی: $($PY --version)"
+success "Python: $($PY --version)"
 
-# ── Clone or update repo ─────────────────────────────────────
+# ── Clone / update ───────────────────────────────────────────
 if [[ -d "$INSTALL_DIR/.git" ]]; then
-  info "به‌روزرسانی نسخه موجود در $INSTALL_DIR ..."
+  info "به‌روزرسانی کد در $INSTALL_DIR ..."
   git -C "$INSTALL_DIR" pull --ff-only
-  success "کد به‌روز شد."
 else
   info "دریافت کد از GitHub..."
   git clone --depth 1 "$REPO_URL" "$INSTALL_DIR"
-  success "کد در $INSTALL_DIR کلون شد."
 fi
+success "کد آماده است."
 
-# ── Virtual environment ──────────────────────────────────────
+# ── Virtual environment ───────────────────────────────────────
 VENV="$INSTALL_DIR/venv"
 info "ساخت محیط مجازی Python..."
-"$PYTHON_BIN" -m venv "$VENV"
+"$PY" -m venv "$VENV"
 "$VENV/bin/pip" install --upgrade pip -q
 "$VENV/bin/pip" install -r "$INSTALL_DIR/requirements.txt" -q
 success "وابستگی‌های Python نصب شد."
 
-# ── Create .env if not exists ────────────────────────────────
-ENV_FILE="$INSTALL_DIR/.env"
-if [[ ! -f "$ENV_FILE" ]]; then
-  cp "$INSTALL_DIR/.env.example" "$ENV_FILE"
-  warn "فایل .env ساخته شد. حتماً آن را ویرایش کنید:"
-  warn "  nano $ENV_FILE"
+# ── Create .env ───────────────────────────────────────────────
+ENV="$INSTALL_DIR/.env"
+if [[ ! -f "$ENV" ]]; then
+  cp "$INSTALL_DIR/.env.example" "$ENV"
 fi
 
-# ── Collect config interactively (if running from terminal) ──
-if [[ -t 0 && ! -s "$ENV_FILE" || $(grep -c "your_telegram_bot_token_here" "$ENV_FILE") -gt 0 ]]; then
+# ── Interactive config ────────────────────────────────────────
+if [[ -t 0 ]] && grep -q "your_telegram_bot_token_here" "$ENV" 2>/dev/null; then
   echo ""
   echo -e "${YELLOW}══ پیکربندی ربات ══${NC}"
-  echo "اطلاعات زیر را وارد کنید (Enter برای رد کردن):"
+  echo "(برای رد کردن هر مرحله Enter بزنید)"
   echo ""
 
-  read -rp "  Telegram Bot Token: " TG_TOKEN
-  read -rp "  Google Client ID:   " G_CLIENT_ID
-  read -rp "  Google Client Secret: " G_CLIENT_SECRET
-  read -rp "  OAuth Redirect URI [http://localhost:8080/oauth/callback]: " REDIRECT_URI
-  REDIRECT_URI="${REDIRECT_URI:-http://localhost:8080/oauth/callback}"
+  ask "  📱 Telegram Bot Token:"; read -r TG_TOKEN
+  ask "  🔑 Google Client ID:  "; read -r G_ID
+  ask "  🔒 Google Client Secret:"; read -r G_SECRET
+  ask "  🌐 OAuth Redirect URI [http://localhost:8080/oauth/callback]:"; read -r REDIR
+  REDIR="${REDIR:-http://localhost:8080/oauth/callback}"
+  ask "  👤 Admin Telegram ID(s) [comma-separated]:"; read -r ADMINS
+  ask "  📢 Required Channels [@chan1,@chan2]:"; read -r CHANNELS
 
-  if [[ -n "$TG_TOKEN" ]]; then
-    sed -i "s|your_telegram_bot_token_here|$TG_TOKEN|g" "$ENV_FILE"
-  fi
-  if [[ -n "$G_CLIENT_ID" ]]; then
-    sed -i "s|your_google_client_id.apps.googleusercontent.com|$G_CLIENT_ID|g" "$ENV_FILE"
-  fi
-  if [[ -n "$G_CLIENT_SECRET" ]]; then
-    sed -i "s|your_google_client_secret|$G_CLIENT_SECRET|g" "$ENV_FILE"
-  fi
-  sed -i "s|http://localhost:8080/oauth/callback|$REDIRECT_URI|g" "$ENV_FILE"
+  # Generate encryption key
+  ENC_KEY=$("$VENV/bin/python3" -c "from cryptography.fernet import Fernet; print(Fernet.generate_key().decode())")
+
+  [[ -n "$TG_TOKEN"  ]] && sed -i "s|your_telegram_bot_token_here|$TG_TOKEN|g"       "$ENV"
+  [[ -n "$G_ID"      ]] && sed -i "s|your_client_id.apps.googleusercontent.com|$G_ID|g" "$ENV"
+  [[ -n "$G_SECRET"  ]] && sed -i "s|your_client_secret|$G_SECRET|g"                  "$ENV"
+  [[ -n "$ADMINS"    ]] && sed -i "s|^ADMIN_IDS=.*|ADMIN_IDS=$ADMINS|g"               "$ENV"
+  [[ -n "$CHANNELS"  ]] && sed -i "s|^REQUIRED_CHANNELS=.*|REQUIRED_CHANNELS=$CHANNELS|g" "$ENV"
+  sed -i "s|your_fernet_key_here|$ENC_KEY|g"        "$ENV"
+  sed -i "s|http://localhost:8080/oauth/callback|$REDIR|g" "$ENV"
 
   success "فایل .env پیکربندی شد."
+  success "کلید رمزنگاری ایجاد شد: ${ENC_KEY:0:20}..."
 fi
 
-# ── Create dedicated system user ─────────────────────────────
-if ! id "drivebot" &>/dev/null; then
+# ── System user ───────────────────────────────────────────────
+if ! id drivebot &>/dev/null; then
   useradd --system --no-create-home --shell /usr/sbin/nologin drivebot
-  success "کاربر سیستمی 'drivebot' ساخته شد."
 fi
 chown -R drivebot:drivebot "$INSTALL_DIR"
+chmod 600 "$ENV"   # env file readable only by owner
 
-# ── systemd service ──────────────────────────────────────────
-SERVICE_FILE="/etc/systemd/system/${SERVICE_NAME}.service"
-cat > "$SERVICE_FILE" <<EOF
+# ── systemd service ───────────────────────────────────────────
+cat > "/etc/systemd/system/${SERVICE}.service" <<EOF
 [Unit]
 Description=Telegram Drive Bot
 After=network-online.target
@@ -145,7 +130,7 @@ Wants=network-online.target
 Type=simple
 User=drivebot
 WorkingDirectory=$INSTALL_DIR
-EnvironmentFile=$ENV_FILE
+EnvironmentFile=$ENV
 ExecStart=$VENV/bin/python main.py
 Restart=on-failure
 RestartSec=10
@@ -157,34 +142,34 @@ WantedBy=multi-user.target
 EOF
 
 systemctl daemon-reload
-systemctl enable "$SERVICE_NAME"
+systemctl enable "$SERVICE"
 success "سرویس systemd ثبت شد."
 
-# ── Start service ────────────────────────────────────────────
-if grep -q "your_telegram_bot_token_here" "$ENV_FILE" 2>/dev/null; then
-  warn "فایل .env هنوز پیکربندی نشده. سرویس شروع نشد."
-  warn "پس از ویرایش .env اجرا کنید:"
-  warn "  sudo systemctl start $SERVICE_NAME"
+# ── Start ─────────────────────────────────────────────────────
+if grep -q "your_telegram_bot_token_here" "$ENV" 2>/dev/null; then
+  warn "فایل .env کامل نشده. سرویس شروع نمی‌شود."
+  warn "ویرایش کنید: nano $ENV"
+  warn "سپس اجرا کنید: sudo systemctl start $SERVICE"
 else
-  systemctl restart "$SERVICE_NAME"
-  success "ربات شروع به کار کرد."
+  systemctl restart "$SERVICE"
+  success "ربات شروع به کار کرد!"
 fi
 
-# ── Summary ──────────────────────────────────────────────────
+# ── Summary ───────────────────────────────────────────────────
 echo ""
-echo -e "${GREEN}╔══════════════════════════════════════════╗${NC}"
-echo -e "${GREEN}║   نصب با موفقیت انجام شد!               ║${NC}"
-echo -e "${GREEN}╚══════════════════════════════════════════╝${NC}"
+echo -e "${GREEN}╔══════════════════════════════════════════════╗${NC}"
+echo -e "${GREEN}║   ✅ نصب با موفقیت انجام شد!                 ║${NC}"
+echo -e "${GREEN}╚══════════════════════════════════════════════╝${NC}"
 echo ""
-echo "  مسیر نصب    : $INSTALL_DIR"
-echo "  فایل تنظیمات: $ENV_FILE"
+printf "  %-22s %s\n" "مسیر نصب:"     "$INSTALL_DIR"
+printf "  %-22s %s\n" "فایل تنظیمات:" "$ENV"
 echo ""
 echo "  دستورات مدیریت:"
-echo -e "  ${CYAN}sudo systemctl start   $SERVICE_NAME${NC}"
-echo -e "  ${CYAN}sudo systemctl stop    $SERVICE_NAME${NC}"
-echo -e "  ${CYAN}sudo systemctl restart $SERVICE_NAME${NC}"
-echo -e "  ${CYAN}sudo journalctl -u $SERVICE_NAME -f${NC}   (مشاهده لاگ)"
+echo -e "  ${CYAN}sudo systemctl start   $SERVICE${NC}"
+echo -e "  ${CYAN}sudo systemctl stop    $SERVICE${NC}"
+echo -e "  ${CYAN}sudo systemctl restart $SERVICE${NC}"
+echo -e "  ${CYAN}sudo journalctl -u $SERVICE -f${NC}    ← مشاهده لاگ"
 echo ""
-echo "  برای به‌روزرسانی:"
+echo "  به‌روزرسانی:"
 echo -e "  ${CYAN}sudo bash $INSTALL_DIR/install.sh${NC}"
 echo ""

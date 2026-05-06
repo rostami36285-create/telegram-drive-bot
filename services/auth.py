@@ -16,39 +16,20 @@ _CLIENT_CONFIG = {
 }
 
 
-def create_flow() -> Flow:
-    return Flow.from_client_config(
-        _CLIENT_CONFIG,
-        scopes=SCOPES,
-        redirect_uri=OAUTH_REDIRECT_URI,
-    )
+def _flow() -> Flow:
+    return Flow.from_client_config(_CLIENT_CONFIG, scopes=SCOPES, redirect_uri=OAUTH_REDIRECT_URI)
 
 
 def get_auth_url(state: str) -> str:
-    flow = create_flow()
-    auth_url, _ = flow.authorization_url(
-        access_type="offline",
-        state=state,
-        prompt="consent",
-    )
-    return auth_url
+    flow = _flow()
+    url, _ = flow.authorization_url(access_type="offline", state=state, prompt="consent")
+    return url
 
 
 def exchange_code(code: str) -> dict:
-    flow = create_flow()
+    flow = _flow()
     flow.fetch_token(code=code)
-    return credentials_to_dict(flow.credentials)
-
-
-def credentials_to_dict(creds: Credentials) -> dict:
-    return {
-        "token": creds.token,
-        "refresh_token": creds.refresh_token,
-        "token_uri": creds.token_uri,
-        "client_id": creds.client_id,
-        "client_secret": creds.client_secret,
-        "scopes": list(creds.scopes) if creds.scopes else SCOPES,
-    }
+    return _to_dict(flow.credentials)
 
 
 def get_credentials(tokens: dict) -> Credentials:
@@ -63,3 +44,18 @@ def get_credentials(tokens: dict) -> Credentials:
     if creds.expired and creds.refresh_token:
         creds.refresh(Request())
     return creds
+
+
+def _to_dict(creds: Credentials) -> dict:
+    return {
+        "token": creds.token,
+        "refresh_token": creds.refresh_token,
+        "token_uri": creds.token_uri,
+        "client_id": creds.client_id,
+        "client_secret": creds.client_secret,
+        "scopes": list(creds.scopes) if creds.scopes else SCOPES,
+    }
+
+
+def creds_to_dict(creds: Credentials) -> dict:
+    return _to_dict(creds)
