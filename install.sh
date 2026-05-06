@@ -104,12 +104,11 @@ fi
 success "Python: $($PY --version)"
 
 # ── Clone / آپدیت کد ─────────────────────────────────────────
-# git 2.35.2+ مالکیت دایرکتوری را بررسی می‌کند — اگر root اجرا می‌کند
-# و پوشه به drivebot تعلق دارد، باید safe.directory ست شود
-git config --global --add safe.directory "$INSTALL_DIR" 2>/dev/null || true
-
 if [[ -d "$INSTALL_DIR/.git" ]]; then
   info "به‌روزرسانی کد در $INSTALL_DIR ..."
+  # git 2.35.2+: اگر پوشه به drivebot تعلق دارد و root اجرا می‌کند،
+  # مالکیت را موقتاً به root می‌دهیم، pull می‌کنیم و برمی‌گردانیم
+  chown -R root:root "$INSTALL_DIR" 2>/dev/null || true
   git -C "$INSTALL_DIR" pull --ff-only || die "آپدیت کد شکست خورد."
 else
   info "دریافت کد از GitHub..."
@@ -396,13 +395,14 @@ else
     success "ربات فعال و پاسخگوست ✓"
 
     info "ثبت Webhook در تلگرام..."
+    # secret_token از یک فایل موقت خوانده می‌شود تا در ps aux نمایش داده نشود
+    _wh_tmp=$(mktemp)
+    printf '%s' "url=https://${DOMAIN}/webhook/${TG_TOKEN_LIVE}&drop_pending_updates=true&secret_token=${WH_SECRET}&allowed_updates=%5B%22message%22%2C%22callback_query%22%2C%22chat_member%22%5D" > "${_wh_tmp}"
     WH_RESULT=$(curl -sf --connect-timeout 15 \
       "https://api.telegram.org/bot${TG_TOKEN_LIVE}/setWebhook" \
-      --data-urlencode "url=https://${DOMAIN}/webhook/${TG_TOKEN_LIVE}" \
-      --data-urlencode "secret_token=${WH_SECRET}" \
-      -d "drop_pending_updates=true" \
-      -d 'allowed_updates=["message","callback_query","chat_member"]' \
+      --data "@${_wh_tmp}" \
       2>&1 || echo '{"ok":false,"description":"curl error"}')
+    rm -f "${_wh_tmp}"
 
     if echo "$WH_RESULT" | grep -q '"ok":true' 2>/dev/null; then
       success "Webhook تلگرام ثبت شد ✓"

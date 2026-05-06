@@ -41,7 +41,9 @@ async def _register_webhook():
             allowed_updates=["message", "callback_query", "chat_member"],
         )
         info = await _bot_app.bot.get_webhook_info()
-        logger.info("Webhook active: %s  (pending: %d)", info.url[:70], info.pending_update_count)
+        # Log domain only — never log the full URL which contains the bot token
+        safe_url = info.url.split("/webhook/")[0] if "/webhook/" in info.url else "set"
+        logger.info("Webhook active: %s  (pending: %d)", safe_url, info.pending_update_count)
     except Exception:
         logger.exception("Failed to register webhook — check WEBHOOK_URL and SSL certificate")
 

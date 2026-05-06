@@ -1,13 +1,16 @@
 from __future__ import annotations
 
 import asyncio
+import ipaddress
 import os
 import re
 import shutil
+import socket
 import tempfile
 import logging
 from pathlib import Path
 from typing import Callable, Awaitable, Optional
+from urllib.parse import urlparse
 
 import aiohttp
 from googleapiclient.discovery import build
@@ -27,6 +30,55 @@ _YT_RE = re.compile(
     r"(youtube\.com/(watch\?v=|shorts/|embed/|live/)|youtu\.be/)[\w\-]+"
 )
 
+# IP ranges that must never be fetched (SSRF protection)
+_BLOCKED_NETWORKS = [
+    ipaddress.ip_network("10.0.0.0/8"),
+    ipaddress.ip_network("172.16.0.0/12"),
+    ipaddress.ip_network("192.168.0.0/16"),
+    ipaddress.ip_network("127.0.0.0/8"),
+    ipaddress.ip_network("169.254.0.0/16"),   # link-local / cloud metadata
+    ipaddress.ip_network("0.0.0.0/8"),
+    ipaddress.ip_network("100.64.0.0/10"),    # carrier-grade NAT
+    ipaddress.ip_network("::1/128"),
+    ipaddress.ip_network("fc00::/7"),
+    ipaddress.ip_network("fe80::/10"),
+]
+
+
+def _host_is_public(hostname: str) -> bool:
+    """Resolve hostname and confirm every returned IP is non-private."""
+    try:
+        infos = socket.getaddrinfo(hostname, None, proto=socket.IPPROTO_TCP)
+        if not infos:
+            return False
+        for (_, _, _, _, sockaddr) in infos:
+            ip = ipaddress.ip_address(sockaddr[0])
+            if ip.is_loopback or ip.is_link_local or ip.is_private:
+                return False
+            for net in _BLOCKED_NETWORKS:
+                try:
+                    if ip in net:
+                        return False
+                except TypeError:
+                    pass
+        return True
+    except Exception:
+        return False
+
+
+async def _validate_download_url(url: str):
+    """Raise ValueError for non-HTTP or internal-IP URLs (SSRF guard)."""
+    parsed = urlparse(url)
+    if parsed.scheme not in ("http", "https"):
+        raise ValueError(f"طرح URL نامعتبر است: {parsed.scheme}")
+    hostname = parsed.hostname
+    if not hostname:
+        raise ValueError("هاست URL نامعتبر است.")
+    loop = asyncio.get_running_loop()
+    safe = await loop.run_in_executor(None, _host_is_public, hostname)
+    if not safe:
+        raise ValueError("لینک به آدرس شبکه داخلی اشاره دارد و مجاز نیست.")
+
 
 class FileTooLargeError(Exception):
     pass
@@ -45,6 +97,7 @@ async def download_url(
     progress_cb: Optional[Callable[[int, int], Awaitable[None]]] = None,
     cancelled_check: Optional[Callable[[], bool]] = None,
 ) -> tuple[Path, str, str, int]:
+    await _validate_download_url(url)
     async with aiohttp.ClientSession() as session:
         async with session.get(url, allow_redirects=True) as resp:
             resp.raise_for_status()

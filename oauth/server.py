@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import html as _html
 import logging
 from typing import Callable
 
@@ -66,7 +67,7 @@ def create_router(get_app: Callable[[], Application | None]) -> APIRouter:
         error = request.query_params.get("error")
 
         if error:
-            return HTMLResponse(_ERR.format(msg=error), status_code=400)
+            return HTMLResponse(_ERR.format(msg=_html.escape(str(error))), status_code=400)
         if not code or not state:
             return HTMLResponse(_ERR.format(msg="پارامترهای نامعتبر."), status_code=400)
 
@@ -81,7 +82,7 @@ def create_router(get_app: Callable[[], Application | None]) -> APIRouter:
             tokens = await exchange_code(code)
         except Exception as e:
             logger.exception("Token exchange failed")
-            return HTMLResponse(_ERR.format(msg=str(e)), status_code=500)
+            return HTMLResponse(_ERR.format(msg=_html.escape(str(e))), status_code=500)
 
         await db.save_tokens(user_id, tokens)
 

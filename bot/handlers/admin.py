@@ -385,29 +385,34 @@ async def handle_admin_search(update: Update, context: ContextTypes.DEFAULT_TYPE
 
 
 async def _send_user_card(update: Update, context: ContextTypes.DEFAULT_TYPE, user: dict):
+    import html as _html
     uid = user["user_id"]
     uploads = await db.get_user_uploads(uid, limit=5)
     upload_count = await db.count_user_uploads(uid)
 
     joined = str(user["joined_at"])[:10]
     blocked_status = "🚫 مسدود" if user["is_blocked"] else "✅ فعال"
+    first = _html.escape(user["first_name"] or "")
+    last = _html.escape(user.get("last_name") or "")
+    uname = _html.escape(user["username"] or "")
 
     recent_files = ""
     if uploads:
-        recent_files = "\n\n📋 **آخرین فایل‌ها:**\n"
+        recent_files = "\n\n📋 <b>آخرین فایل‌ها:</b>\n"
         for up in uploads:
             icon = "🔗" if up["upload_type"] == "link" else "📤"
             size = _fmt_size(up["file_size"])
-            recent_files += f"  {icon} {up['filename']} — {size} — {str(up['uploaded_at'])[:10]}\n"
+            fname = _html.escape(up["filename"])
+            recent_files += f"  {icon} {fname} — {size} — {str(up['uploaded_at'])[:10]}\n"
 
     text = (
-        f"👤 **اطلاعات کاربر**\n\n"
-        f"🆔 شناسه: `{uid}`\n"
-        f"👤 نام: {user['first_name']} {user.get('last_name') or ''}\n"
-        f"📱 نام کاربری: @{user['username'] or '—'}\n"
+        f"👤 <b>اطلاعات کاربر</b>\n\n"
+        f"🆔 شناسه: <code>{uid}</code>\n"
+        f"👤 نام: {first} {last}\n"
+        f"📱 نام کاربری: {'@' + uname if uname else '—'}\n"
         f"📅 عضویت: {joined}\n"
         f"🔒 وضعیت: {blocked_status}\n\n"
-        f"📊 **آمار آپلود**\n"
+        f"📊 <b>آمار آپلود</b>\n"
         f"▪️ کل: {user['total_uploads']} فایل\n"
         f"▪️ با لینک: {user['total_link_ups']}\n"
         f"▪️ فایل مستقیم: {user['total_file_ups']}\n"
@@ -418,6 +423,6 @@ async def _send_user_card(update: Update, context: ContextTypes.DEFAULT_TYPE, us
 
     await update.message.reply_text(
         text,
-        parse_mode="Markdown",
+        parse_mode="HTML",
         reply_markup=admin_user_actions(uid, bool(user["is_blocked"])),
     )
