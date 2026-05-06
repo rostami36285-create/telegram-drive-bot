@@ -104,6 +104,10 @@ fi
 success "Python: $($PY --version)"
 
 # ── Clone / آپدیت کد ─────────────────────────────────────────
+# git 2.35.2+ مالکیت دایرکتوری را بررسی می‌کند — اگر root اجرا می‌کند
+# و پوشه به drivebot تعلق دارد، باید safe.directory ست شود
+git config --global --add safe.directory "$INSTALL_DIR" 2>/dev/null || true
+
 if [[ -d "$INSTALL_DIR/.git" ]]; then
   info "به‌روزرسانی کد در $INSTALL_DIR ..."
   git -C "$INSTALL_DIR" pull --ff-only || die "آپدیت کد شکست خورد."
