@@ -14,9 +14,11 @@ SCOPES = ["https://www.googleapis.com/auth/drive.file"]
 
 
 async def _get_client_config() -> dict:
-    """Load client credentials from DB first, fall back to .env."""
-    client_id = await db.get_app_setting("google_client_id", encrypted=True) or GOOGLE_CLIENT_ID
-    client_secret = await db.get_app_setting("google_client_secret", encrypted=True) or GOOGLE_CLIENT_SECRET
+    """Load client credentials from DB first, fall back to .env (ignoring placeholders)."""
+    db_id = await db.get_app_setting("google_client_id", encrypted=True)
+    db_secret = await db.get_app_setting("google_client_secret", encrypted=True)
+    client_id = (db_id if _is_real(db_id) else None) or (GOOGLE_CLIENT_ID if _is_real(GOOGLE_CLIENT_ID) else "")
+    client_secret = (db_secret if _is_real(db_secret) else None) or (GOOGLE_CLIENT_SECRET if _is_real(GOOGLE_CLIENT_SECRET) else "")
     return {
         "web": {
             "client_id": client_id,
@@ -28,11 +30,23 @@ async def _get_client_config() -> dict:
     }
 
 
+_PLACEHOLDERS = {
+    "your_client_id.apps.googleusercontent.com",
+    "your_client_secret",
+    "your_client_id",
+    "",
+}
+
+
+def _is_real(val: str | None) -> bool:
+    return bool(val) and val.strip() not in _PLACEHOLDERS
+
+
 async def has_oauth_config() -> bool:
-    """True if client_id and client_secret are available (DB or .env)."""
+    """True if real (non-placeholder) client_id and client_secret are available."""
     client_id = await db.get_app_setting("google_client_id", encrypted=True) or GOOGLE_CLIENT_ID
     client_secret = await db.get_app_setting("google_client_secret", encrypted=True) or GOOGLE_CLIENT_SECRET
-    return bool(client_id and client_secret)
+    return _is_real(client_id) and _is_real(client_secret)
 
 
 def _make_flow(config: dict) -> Flow:

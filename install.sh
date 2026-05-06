@@ -326,42 +326,47 @@ if [[ -z "$TG_TOKEN_LIVE" ]] || \
   warn "  → sudo systemctl start $SERVICE"
 else
   systemctl restart "$SERVICE"
-  success "سرویس ربات راه‌اندازی شد."
+  info "سرویس ربات راه‌اندازی شد — منتظر آماده شدن (حداکثر ۶۰ ثانیه)..."
 
-  # ── ثبت Webhook مستقیم از طریق Telegram API ──────────────
-  # نیازی به بالا بودن ربات نیست — Nginx+SSL کافی است
-  info "ثبت Webhook در تلگرام (۳ ثانیه صبر می‌کنیم)..."
-  sleep 3
-
-  WH_RESULT=$(curl -sf --connect-timeout 15 \
-    "https://api.telegram.org/bot${TG_TOKEN_LIVE}/setWebhook" \
-    --data-urlencode "url=https://${DOMAIN}/webhook/${TG_TOKEN_LIVE}" \
-    --data-urlencode "secret_token=${WH_SECRET}" \
-    -d "drop_pending_updates=true" \
-    -d 'allowed_updates=["message","callback_query","chat_member"]' \
-    2>&1 || echo '{"ok":false,"description":"curl timeout"}')
-
-  if echo "$WH_RESULT" | grep -q '"ok":true'; then
-    success "Webhook تلگرام ثبت شد ✓"
-  else
-    warn "نتیجه ثبت webhook: $WH_RESULT"
-    warn "برای ثبت دستی:"
-    warn "  curl 'https://api.telegram.org/bot${TG_TOKEN_LIVE}/setWebhook' \\"
-    warn "    --data-urlencode 'url=https://${DOMAIN}/webhook/${TG_TOKEN_LIVE}'"
-  fi
-
-  # ── بررسی سلامت ربات ────────────────────────────────────
-  info "بررسی سلامت ربات..."
+  # ── صبر می‌کنیم تا ربات واقعاً healthy بشه ───────────────
+  # (setWebhook نیاز داره ربات بالا باشه تا Telegram بتونه تست کنه)
   READY=0
-  for _i in $(seq 1 15); do
-    curl -sf "http://127.0.0.1:8080/health" > /dev/null 2>&1 && READY=1 && break
+  for _i in $(seq 1 30); do
+    if curl -sf --connect-timeout 2 "http://127.0.0.1:8080/health" > /dev/null 2>&1; then
+      READY=1
+      break
+    fi
+    printf "."
     sleep 2
   done
+  echo ""
+
   if [[ $READY -eq 1 ]]; then
     success "ربات فعال و پاسخگوست ✓"
+
+    # ── ثبت Webhook پس از تأیید آماده بودن ربات ───────────
+    info "ثبت Webhook در تلگرام..."
+    WH_RESULT=$(curl -sf --connect-timeout 15 \
+      "https://api.telegram.org/bot${TG_TOKEN_LIVE}/setWebhook" \
+      --data-urlencode "url=https://${DOMAIN}/webhook/${TG_TOKEN_LIVE}" \
+      --data-urlencode "secret_token=${WH_SECRET}" \
+      -d "drop_pending_updates=true" \
+      -d 'allowed_updates=["message","callback_query","chat_member"]' \
+      2>&1 || echo '{"ok":false,"description":"curl timeout"}')
+
+    if echo "$WH_RESULT" | grep -q '"ok":true'; then
+      success "Webhook تلگرام ثبت شد ✓"
+    else
+      warn "ثبت webhook: $WH_RESULT"
+      warn "برای ثبت دستی اجرا کنید:"
+      warn "  curl -s 'https://api.telegram.org/bot${TG_TOKEN_LIVE}/setWebhook?url=https://${DOMAIN}/webhook/${TG_TOKEN_LIVE}'"
+    fi
   else
-    warn "ربات هنوز آماده نشده — لاگ را بررسی کنید:"
+    warn "ربات در ۶۰ ثانیه آماده نشد — بررسی لاگ:"
     warn "  sudo journalctl -u $SERVICE -n 50 --no-pager"
+    warn ""
+    warn "پس از رفع مشکل، webhook را دستی ثبت کنید:"
+    warn "  curl -s 'https://api.telegram.org/bot${TG_TOKEN_LIVE}/setWebhook?url=https://${DOMAIN}/webhook/${TG_TOKEN_LIVE}'"
   fi
 fi
 

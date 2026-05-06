@@ -217,15 +217,40 @@ async def _test_oauth(query):
         )
 
 
+_OAUTH_PLACEHOLDERS = {
+    "your_client_id.apps.googleusercontent.com",
+    "your_client_secret",
+    "your_client_id",
+    "",
+}
+
+
+def _is_real_oauth_value(val: str | None) -> bool:
+    return bool(val) and val.strip() not in _OAUTH_PLACEHOLDERS
+
+
 async def _show_oauth_settings(query, notice: str = ""):
     from config import GOOGLE_CLIENT_ID, GOOGLE_CLIENT_SECRET
     db_id = await db.get_app_setting("google_client_id", encrypted=True)
     db_secret = await db.get_app_setting("google_client_secret", encrypted=True)
-    has_id = bool(db_id or GOOGLE_CLIENT_ID)
-    has_secret = bool(db_secret or GOOGLE_CLIENT_SECRET)
 
-    source_id = "دیتابیس" if db_id else ("فایل .env" if GOOGLE_CLIENT_ID else "—")
-    source_secret = "دیتابیس" if db_secret else ("فایل .env" if GOOGLE_CLIENT_SECRET else "—")
+    # فقط مقادیر واقعی (نه placeholder) به عنوان «تنظیم شده» محسوب می‌شوند
+    has_id = _is_real_oauth_value(db_id) or _is_real_oauth_value(GOOGLE_CLIENT_ID)
+    has_secret = _is_real_oauth_value(db_secret) or _is_real_oauth_value(GOOGLE_CLIENT_SECRET)
+
+    if _is_real_oauth_value(db_id):
+        source_id = "دیتابیس"
+    elif _is_real_oauth_value(GOOGLE_CLIENT_ID):
+        source_id = "فایل .env"
+    else:
+        source_id = "—"
+
+    if _is_real_oauth_value(db_secret):
+        source_secret = "دیتابیس"
+    elif _is_real_oauth_value(GOOGLE_CLIENT_SECRET):
+        source_secret = "فایل .env"
+    else:
+        source_secret = "—"
 
     text = (
         "⚙️ **تنظیمات OAuth گوگل**\n\n"
