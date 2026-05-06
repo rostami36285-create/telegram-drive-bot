@@ -27,6 +27,25 @@ logger = logging.getLogger(__name__)
 _bot_app: Application | None = None
 
 
+async def _register_webhook():
+    """Registers the Telegram webhook after uvicorn is ready to accept connections."""
+    await asyncio.sleep(3)   # Wait for uvicorn to bind and start accepting
+    if _bot_app is None:
+        return
+    wh_url = f"{WEBHOOK_URL}/webhook/{TELEGRAM_BOT_TOKEN}"
+    try:
+        await _bot_app.bot.set_webhook(
+            url=wh_url,
+            secret_token=WEBHOOK_SECRET or None,
+            drop_pending_updates=True,
+            allowed_updates=["message", "callback_query", "chat_member"],
+        )
+        info = await _bot_app.bot.get_webhook_info()
+        logger.info("Webhook active: %s (pending: %d)", info.url[:60] + "…", info.pending_update_count)
+    except Exception:
+        logger.exception("Failed to register webhook — check WEBHOOK_URL and SSL cert")
+
+
 @asynccontextmanager
 async def lifespan(_: FastAPI):
     global _bot_app
@@ -50,14 +69,11 @@ async def lifespan(_: FastAPI):
     asyncio.create_task(queue.start(_bot_app.bot))
 
     if WEBHOOK_URL:
-        wh_url = f"{WEBHOOK_URL}/webhook/{TELEGRAM_BOT_TOKEN}"
-        await _bot_app.bot.set_webhook(
-            url=wh_url,
-            secret_token=WEBHOOK_SECRET or None,
-            drop_pending_updates=True,
-            allowed_updates=["message", "callback_query", "chat_member"],
-        )
-        logger.info("Webhook registered: %s/webhook/***", WEBHOOK_URL)
+        # Schedule webhook registration as a background task.
+        # We cannot call set_webhook() here because uvicorn hasn't started
+        # accepting connections yet — Telegram's verification request would fail.
+        asyncio.create_task(_register_webhook())
+        logger.info("Webhook registration scheduled (after server ready)")
     else:
         asyncio.create_task(_bot_app.updater.start_polling(drop_pending_updates=True))
         logger.info("Bot started in polling mode")

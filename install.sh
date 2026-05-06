@@ -273,27 +273,6 @@ HOOKEOF
   chmod +x /etc/letsencrypt/renewal-hooks/deploy/nginx-reload.sh
   success "هوک reload Nginx پس از تمدید SSL ثبت شد."
 
-  # ── ثبت Webhook در تلگرام ────────────────────────────────
-  if [[ -n "$TG_TOKEN_ENV" && "$TG_TOKEN_ENV" != "your_telegram_bot_token_here" ]]; then
-    info "ثبت Webhook در تلگرام..."
-    WH_RESULT=$(curl -sf \
-      "https://api.telegram.org/bot${TG_TOKEN_ENV}/setWebhook" \
-      --data-urlencode "url=https://${DOMAIN}/webhook/${TG_TOKEN_ENV}" \
-      --data-urlencode "secret_token=${WH_SECRET}" \
-      -d "drop_pending_updates=true" \
-      -d 'allowed_updates=["message","callback_query","chat_member"]' \
-      2>&1 || echo '{"ok":false,"description":"curl failed"}')
-
-    if echo "$WH_RESULT" | grep -q '"ok":true'; then
-      success "Webhook تلگرام ثبت شد: https://${DOMAIN}/webhook/***"
-    else
-      warn "ثبت خودکار webhook شکست خورد. پس از راه‌اندازی ربات دستی اجرا کنید:"
-      warn "  curl 'https://api.telegram.org/bot<TOKEN>/setWebhook?url=https://${DOMAIN}/webhook/<TOKEN>'"
-    fi
-  else
-    warn "Token تنظیم نشده — پس از ویرایش .env، webhook را دستی ثبت کنید."
-  fi
-
 fi  # end DOMAIN block
 
 # ══════════════════════════════════════════════════════════════
@@ -339,6 +318,50 @@ if grep -q "your_telegram_bot_token_here" "$ENV" 2>/dev/null; then
 else
   systemctl restart "$SERVICE"
   success "ربات راه‌اندازی شد!"
+
+  # ── ثبت Webhook در تلگرام (بعد از بالا آمدن سرویس) ─────────
+  if [[ -n "$DOMAIN" ]]; then
+    TG_TOKEN_LIVE=$(grep "^TELEGRAM_BOT_TOKEN=" "$ENV" | cut -d'=' -f2 || true)
+    WH_SECRET_LIVE=$(grep "^WEBHOOK_SECRET=" "$ENV" | cut -d'=' -f2 || true)
+
+    if [[ -n "$TG_TOKEN_LIVE" && "$TG_TOKEN_LIVE" != "your_telegram_bot_token_here" ]]; then
+      info "منتظر آماده شدن سرور هستیم..."
+
+      # Health check با timeout 30 ثانیه
+      READY=0
+      for i in $(seq 1 15); do
+        if curl -sf "http://127.0.0.1:8080/health" > /dev/null 2>&1; then
+          READY=1; break
+        fi
+        sleep 2
+      done
+
+      if [[ $READY -eq 1 ]]; then
+        success "سرور آماده است. ثبت Webhook..."
+        WH_RESULT=$(curl -sf \
+          "https://api.telegram.org/bot${TG_TOKEN_LIVE}/setWebhook" \
+          --data-urlencode "url=https://${DOMAIN}/webhook/${TG_TOKEN_LIVE}" \
+          --data-urlencode "secret_token=${WH_SECRET_LIVE}" \
+          -d "drop_pending_updates=true" \
+          -d 'allowed_updates=["message","callback_query","chat_member"]' \
+          2>&1 || echo '{"ok":false,"description":"curl failed"}')
+
+        if echo "$WH_RESULT" | grep -q '"ok":true'; then
+          success "Webhook تلگرام ثبت شد ✓"
+          success "آدرس: https://${DOMAIN}/webhook/***"
+        else
+          warn "ثبت webhook شکست خورد: $WH_RESULT"
+          warn "دستی اجرا کنید:"
+          warn "  curl 'https://api.telegram.org/bot\${TOKEN}/setWebhook?url=https://${DOMAIN}/webhook/\${TOKEN}'"
+        fi
+      else
+        warn "سرور در ۳۰ ثانیه آماده نشد — webhook دستی ثبت کنید."
+        warn "  curl 'https://api.telegram.org/bot\${TOKEN}/setWebhook?url=https://${DOMAIN}/webhook/\${TOKEN}'"
+      fi
+    else
+      warn "Token هنوز تنظیم نشده — webhook را پس از ویرایش .env دستی ثبت کنید."
+    fi
+  fi
 fi
 
 # ══════════════════════════════════════════════════════════════

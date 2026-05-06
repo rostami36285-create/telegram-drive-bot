@@ -50,10 +50,12 @@ def create_router(get_app: Callable[[], Application | None]) -> APIRouter:
         try:
             data = await request.json()
             update = Update.de_json(data, app.bot)
-            await app.process_update(update)
+            # Put in PTB's update queue — dispatcher processes it async.
+            # Never await process_update() directly: it blocks the HTTP response
+            # and Telegram retries after a timeout, causing duplicate updates.
+            await app.update_queue.put(update)
         except Exception:
             logger.exception("Error processing webhook update")
-            # Return 200 anyway so Telegram doesn't retry indefinitely
         return Response(status_code=200)
 
     # ── Google OAuth callback ─────────────────────────────────
