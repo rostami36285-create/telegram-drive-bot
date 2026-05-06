@@ -92,9 +92,12 @@ def register(app: Application):
     # Text messages — route by state
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, _route_text))
 
-    # File messages
+    # File messages — all media types
     app.add_handler(MessageHandler(
-        (filters.Document.ALL | filters.VIDEO | filters.AUDIO) & ~filters.COMMAND,
+        (
+            filters.Document.ALL | filters.VIDEO | filters.AUDIO |
+            filters.PHOTO | filters.VOICE | filters.VIDEO_NOTE
+        ) & ~filters.COMMAND,
         handle_file_message,
     ))
 

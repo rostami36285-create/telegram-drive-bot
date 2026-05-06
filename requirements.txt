@@ -9,3 +9,4 @@ uvicorn[standard]==0.29.0
 python-dotenv==1.0.1
 cryptography==42.0.5
 aiofiles==23.2.1
+yt-dlp>=2024.1.0

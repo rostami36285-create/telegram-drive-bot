@@ -5,7 +5,7 @@ import secrets
 import logging
 import re
 
-from telegram import Update, Document, Video, Audio
+from telegram import Update
 from telegram.ext import ContextTypes
 
 import database.db as db
@@ -68,13 +68,13 @@ async def _ensure_oauth(update: Update, context: ContextTypes.DEFAULT_TYPE) -> b
     if not await has_oauth_config():
         query = update.callback_query
         txt = (
-            "⚠️ **OAuth گوگل تنظیم نشده است.**\n\n"
+            "⚠️ اتصال به گوگل درایو هنوز تنظیم نشده است.\n\n"
             "ادمین باید ابتدا Client ID و Client Secret گوگل را از پنل ادمین وارد کند."
         )
         if query:
-            await query.edit_message_text(txt, parse_mode="Markdown", reply_markup=main_menu())
+            await query.edit_message_text(txt, reply_markup=main_menu())
         else:
-            await update.message.reply_text(txt, parse_mode="Markdown", reply_markup=main_menu())
+            await update.message.reply_text(txt, reply_markup=main_menu())
         return False
 
     state = secrets.token_urlsafe(32)
@@ -83,14 +83,14 @@ async def _ensure_oauth(update: Update, context: ContextTypes.DEFAULT_TYPE) -> b
 
     query = update.callback_query
     text = (
-        "☁️ **اتصال به گوگل درایو**\n\n"
+        "☁️ اتصال به گوگل درایو\n\n"
         "برای آپلود، ابتدا حساب گوگل خود را متصل کنید.\n"
         "روی دکمه زیر کلیک کنید و پس از تأیید به ربات برگردید:"
     )
     if query:
-        await query.edit_message_text(text, parse_mode="Markdown", reply_markup=connect_drive(auth_url))
+        await query.edit_message_text(text, reply_markup=connect_drive(auth_url))
     else:
-        await update.message.reply_text(text, parse_mode="Markdown", reply_markup=connect_drive(auth_url))
+        await update.message.reply_text(text, reply_markup=connect_drive(auth_url))
     return False
 
 
@@ -107,10 +107,12 @@ async def upload_link_callback(update: Update, context: ContextTypes.DEFAULT_TYP
 
     context.user_data["state"] = WAIT_URL
     await query.edit_message_text(
-        "🔗 **آپلود با لینک**\n\n"
-        "لینک مستقیم فایل را ارسال کنید:\n"
-        f"_(حداکثر حجم: {MAX_FILE_SIZE_MB // 1024} گیگابایت)_",
-        parse_mode="Markdown",
+        f"🔗 آپلود با لینک\n\n"
+        f"لینک فایل یا ویدیو یوتیوب را ارسال کنید:\n"
+        f"(حداکثر حجم: {MAX_FILE_SIZE_MB // 1024} گیگابایت)\n\n"
+        f"پشتیبانی از:\n"
+        f"• لینک مستقیم فایل\n"
+        f"• لینک یوتیوب (youtube.com / youtu.be)",
         reply_markup=cancel_and_menu(),
     )
 
@@ -156,9 +158,8 @@ async def handle_url_message(update: Update, context: ContextTypes.DEFAULT_TYPE)
         if pos > 1:
             await status_msg.edit_text(
                 f"📋 در صف آپلود هستید.\n"
-                f"موقعیت شما: **{pos}**\n"
+                f"موقعیت شما: {pos}\n"
                 "به محض رسیدن نوبت شروع می‌شود.",
-                parse_mode="Markdown",
             )
     except QueueFullError:
         await status_msg.edit_text(
@@ -180,10 +181,10 @@ async def upload_file_callback(update: Update, context: ContextTypes.DEFAULT_TYP
 
     context.user_data["state"] = WAIT_FILE
     await query.edit_message_text(
-        "📤 **آپلود فایل**\n\n"
-        "فایل خود را ارسال کنید.\n"
-        f"_(حداکثر حجم: {MAX_FILE_SIZE_MB // 1024} گیگابایت — فایل‌های بزرگ‌تر از 2 گیگ را از طریق لینک آپلود کنید)_",
-        parse_mode="Markdown",
+        f"📤 آپلود فایل\n\n"
+        f"فایل، عکس یا ویدیو خود را ارسال کنید.\n"
+        f"(حداکثر حجم: {MAX_FILE_SIZE_MB // 1024} گیگابایت)\n\n"
+        f"انواع پشتیبانی‌شده: هر نوع فایل، عکس، ویدیو، صدا",
         reply_markup=cancel_and_menu(),
     )
 
@@ -193,11 +194,46 @@ async def handle_file_message(update: Update, context: ContextTypes.DEFAULT_TYPE
         return
 
     msg = update.message
-    file_obj = msg.document or msg.video or msg.audio
+
+    # Determine file object and metadata
+    if msg.photo:
+        # photos come as a list of PhotoSize; take the largest
+        photo = msg.photo[-1]
+        file_obj = photo
+        filename = f"photo_{photo.file_unique_id}.jpg"
+        file_size = photo.file_size or 0
+        mime_type = "image/jpeg"
+    elif msg.document:
+        file_obj = msg.document
+        filename = file_obj.file_name or "file"
+        file_size = file_obj.file_size or 0
+        mime_type = file_obj.mime_type or "application/octet-stream"
+    elif msg.video:
+        file_obj = msg.video
+        filename = file_obj.file_name or f"video_{file_obj.file_unique_id}.mp4"
+        file_size = file_obj.file_size or 0
+        mime_type = file_obj.mime_type or "video/mp4"
+    elif msg.audio:
+        file_obj = msg.audio
+        filename = file_obj.file_name or f"audio_{file_obj.file_unique_id}.mp3"
+        file_size = file_obj.file_size or 0
+        mime_type = file_obj.mime_type or "audio/mpeg"
+    elif msg.voice:
+        file_obj = msg.voice
+        filename = f"voice_{file_obj.file_unique_id}.ogg"
+        file_size = file_obj.file_size or 0
+        mime_type = "audio/ogg"
+    elif msg.video_note:
+        file_obj = msg.video_note
+        filename = f"video_note_{file_obj.file_unique_id}.mp4"
+        file_size = file_obj.file_size or 0
+        mime_type = "video/mp4"
+    else:
+        file_obj = None
 
     if not file_obj:
         await msg.reply_text(
-            "❌ فایل معتبری دریافت نشد. لطفاً یک فایل ارسال کنید.",
+            "❌ فایل معتبری دریافت نشد. لطفاً یک فایل، عکس یا ویدیو ارسال کنید.",
             reply_markup=cancel_and_menu(),
         )
         return
@@ -213,12 +249,7 @@ async def handle_file_message(update: Update, context: ContextTypes.DEFAULT_TYPE
         context.user_data["state"] = IDLE
         return
 
-    # Get file info
-    filename = getattr(file_obj, "file_name", None) or "file"
-    file_size = getattr(file_obj, "file_size", 0) or 0
-    mime_type = getattr(file_obj, "mime_type", "application/octet-stream") or "application/octet-stream"
-
-    # Check size early (Telegram gives us file_size)
+    # Check size (Telegram gives us file_size for files < 20 MB; for larger it may be 0)
     max_bytes = MAX_FILE_SIZE_MB * 1024 * 1024
     if file_size and file_size > max_bytes:
         await msg.reply_text(
@@ -231,7 +262,7 @@ async def handle_file_message(update: Update, context: ContextTypes.DEFAULT_TYPE
 
     # Get Telegram download URL
     tg_file = await context.bot.get_file(file_obj.file_id)
-    file_path_url = tg_file.file_path  # direct HTTPS URL
+    file_path_url = tg_file.file_path
 
     context.user_data["state"] = IDLE
     queue = context.application.bot_data["upload_queue"]
@@ -253,8 +284,7 @@ async def handle_file_message(update: Update, context: ContextTypes.DEFAULT_TYPE
         pos = await queue.enqueue(task)
         if pos > 1:
             await status_msg.edit_text(
-                f"📋 در صف آپلود هستید.\nموقعیت: **{pos}**",
-                parse_mode="Markdown",
+                f"📋 در صف آپلود هستید.\nموقعیت: {pos}",
             )
     except QueueFullError:
         await status_msg.edit_text(

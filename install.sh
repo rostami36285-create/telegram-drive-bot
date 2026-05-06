@@ -92,6 +92,8 @@ info "نصب پیش‌نیازها..."
 case "${ID:-}" in ubuntu|debian) apt-get update -qq >/dev/null 2>&1 || true ;; esac
 pkg_install python3 python3-pip python3-venv git curl openssl || \
   die "نصب پیش‌نیازها شکست خورد."
+# ffmpeg برای ترکیب ویدیو+صدا در آپلود یوتیوب
+pkg_install ffmpeg 2>/dev/null || warn "ffmpeg نصب نشد — دانلود یوتیوب ممکن است محدود باشد."
 success "پیش‌نیازها نصب شد."
 
 # ── بررسی Python 3.10+ ───────────────────────────────────────

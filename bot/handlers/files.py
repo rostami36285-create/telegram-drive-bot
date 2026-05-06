@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import html
 import logging
 
 from telegram import Update
@@ -35,6 +36,21 @@ def _quota_line(quota: dict) -> str:
         return ""
 
 
+def _file_lines(uploads: list[dict], offset: int) -> list[str]:
+    lines = []
+    for i, up in enumerate(uploads, start=offset + 1):
+        icon = "🔗" if up["upload_type"] == "link" else "📤"
+        size = _fmt_size(up["file_size"])
+        date = str(up["uploaded_at"])[:10]
+        name = html.escape(up["filename"])
+        link = up.get("drive_view_link", "")
+        if link:
+            lines.append(f'{i}. {icon} <a href="{link}">{name}</a> — {size} — {date}')
+        else:
+            lines.append(f"{i}. {icon} {name} — {size} — {date}")
+    return lines
+
+
 async def files_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     await query.answer()
@@ -50,12 +66,11 @@ async def files_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     uploads = await db.get_user_uploads(user_id, limit=_PAGE, offset=offset)
 
-    # Fetch Drive quota in background (non-blocking, best-effort)
     quota_line = ""
     tokens = await db.get_tokens(user_id)
     if tokens:
         try:
-            loop = asyncio.get_event_loop()
+            loop = asyncio.get_running_loop()
             quota = await loop.run_in_executor(None, get_drive_quota, tokens)
             quota_line = _quota_line(quota)
         except Exception:
@@ -63,25 +78,15 @@ async def files_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     page_num = offset // _PAGE + 1
     total_pages = (total + _PAGE - 1) // _PAGE
-    lines = [f"📁 *فایل‌های آپلود‌شده* (صفحه {page_num}/{total_pages}){quota_line}\n"]
 
-    for i, up in enumerate(uploads, start=offset + 1):
-        icon = "🔗" if up["upload_type"] == "link" else "📤"
-        size = _fmt_size(up["file_size"])
-        date = str(up["uploaded_at"])[:10]
-        name = up["filename"]
-        link = up.get("drive_view_link", "")
-        if link:
-            lines.append(f"{i}\\. {icon} [{name}]({link}) — {size} — {date}")
-        else:
-            lines.append(f"{i}\\. {icon} {name} — {size} — {date}")
-
-    lines.append("\n_روی نام فایل کلیک کنید تا در درایو باز شود._")
-    lines.append("_برای حذف، دکمه‌های زیر را بزنید:_")
+    lines = [f"📁 <b>فایل‌های آپلود‌شده</b> (صفحه {page_num}/{total_pages}){quota_line}\n"]
+    lines.extend(_file_lines(uploads, offset))
+    lines.append("\n<i>روی نام فایل کلیک کنید تا در درایو باز شود.</i>")
+    lines.append("<i>برای حذف، دکمه‌های زیر را بزنید:</i>")
 
     await query.edit_message_text(
         "\n".join(lines),
-        parse_mode="MarkdownV2",
+        parse_mode="HTML",
         disable_web_page_preview=True,
         reply_markup=files_manage_kb(uploads, offset, total, _PAGE),
     )
@@ -99,21 +104,17 @@ async def file_delete_callback(update: Update, context: ContextTypes.DEFAULT_TYP
         await query.answer("❌ فایل یافت نشد.", show_alert=True)
         return
 
-    # Delete from Google Drive (best-effort)
     tokens = await db.get_tokens(user_id)
     if tokens and record.get("drive_file_id"):
         try:
-            loop = asyncio.get_event_loop()
+            loop = asyncio.get_running_loop()
             await loop.run_in_executor(None, delete_file, tokens, record["drive_file_id"])
         except Exception as e:
             logger.warning("Could not delete Drive file %s: %s", record["drive_file_id"], e)
 
     await db.delete_upload_record(upload_id)
 
-    # Refresh the file list at same offset
     total = await db.count_user_uploads(user_id)
-    offset = 0  # reset to first page after deletion
-
     if total == 0:
         await query.edit_message_text(
             "✅ فایل حذف شد.\n\n📭 دیگر فایلی وجود ندارد.",
@@ -121,26 +122,16 @@ async def file_delete_callback(update: Update, context: ContextTypes.DEFAULT_TYP
         )
         return
 
-    # Re-render the list
-    uploads = await db.get_user_uploads(user_id, limit=_PAGE, offset=offset)
-    page_num = 1
+    uploads = await db.get_user_uploads(user_id, limit=_PAGE, offset=0)
     total_pages = (total + _PAGE - 1) // _PAGE
-    lines = [f"✅ فایل حذف شد\\.\n\n📁 *فایل‌های آپلود‌شده* (صفحه {page_num}/{total_pages})\n"]
 
-    for i, up in enumerate(uploads, start=1):
-        icon = "🔗" if up["upload_type"] == "link" else "📤"
-        size = _fmt_size(up["file_size"])
-        date = str(up["uploaded_at"])[:10]
-        name = up["filename"]
-        link = up.get("drive_view_link", "")
-        if link:
-            lines.append(f"{i}\\. {icon} [{name}]({link}) — {size} — {date}")
-        else:
-            lines.append(f"{i}\\. {icon} {name} — {size} — {date}")
+    lines = [f"✅ فایل حذف شد.\n\n📁 <b>فایل‌های آپلود‌شده</b> (صفحه 1/{total_pages})\n"]
+    lines.extend(_file_lines(uploads, 0))
+    lines.append("\n<i>برای حذف، دکمه‌های زیر را بزنید:</i>")
 
     await query.edit_message_text(
         "\n".join(lines),
-        parse_mode="MarkdownV2",
+        parse_mode="HTML",
         disable_web_page_preview=True,
-        reply_markup=files_manage_kb(uploads, offset, total, _PAGE),
+        reply_markup=files_manage_kb(uploads, 0, total, _PAGE),
     )

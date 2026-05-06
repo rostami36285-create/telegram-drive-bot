@@ -1,6 +1,9 @@
 from __future__ import annotations
 
+import asyncio
 import os
+import re
+import shutil
 import tempfile
 import logging
 from pathlib import Path
@@ -19,6 +22,11 @@ _MAX_BYTES = MAX_FILE_SIZE_MB * 1024 * 1024
 _CHUNK = 512 * 1024
 _DRIVE_CHUNK = 5 * 1024 * 1024
 
+_YT_RE = re.compile(
+    r"(https?://)?(www\.)?"
+    r"(youtube\.com/(watch\?v=|shorts/|embed/|live/)|youtu\.be/)[\w\-]+"
+)
+
 
 class FileTooLargeError(Exception):
     pass
@@ -26,6 +34,10 @@ class FileTooLargeError(Exception):
 
 class UploadCancelled(Exception):
     pass
+
+
+def is_youtube_url(url: str) -> bool:
+    return bool(_YT_RE.search(url))
 
 
 async def download_url(
@@ -72,6 +84,99 @@ async def download_url(
                 tmp.close()
 
             return Path(tmp.name), filename, mime_type, total
+
+
+async def download_youtube(
+    url: str,
+    progress_cb: Optional[Callable[[int, int], Awaitable[None]]] = None,
+    cancelled_check: Optional[Callable[[], bool]] = None,
+) -> tuple[Path, str, str, int]:
+    try:
+        import yt_dlp
+    except ImportError:
+        raise Exception("yt-dlp نصب نیست. دستور زیر را اجرا کنید:\npip install yt-dlp")
+
+    tmp_dir = tempfile.mkdtemp(prefix="ytdl_")
+    _prog = [0, 0]        # [downloaded_bytes, total_bytes]
+    _done_event = asyncio.Event()
+    _error: list[Exception | None] = [None]
+    _info: list[dict | None] = [None]
+
+    def _hook(d: dict):
+        if d["status"] == "downloading":
+            _prog[0] = d.get("downloaded_bytes", 0)
+            _prog[1] = d.get("total_bytes") or d.get("total_bytes_estimate", 0)
+
+    ydl_opts = {
+        "format": "best[ext=mp4]/bestvideo[ext=mp4]+bestaudio[ext=m4a]/best",
+        "outtmpl": os.path.join(tmp_dir, "%(title)s.%(ext)s"),
+        "merge_output_format": "mp4",
+        "progress_hooks": [_hook],
+        "quiet": True,
+        "no_warnings": True,
+        "noplaylist": True,
+    }
+
+    loop = asyncio.get_running_loop()
+
+    async def _monitor():
+        while not _done_event.is_set():
+            if progress_cb and _prog[1] > 0:
+                await progress_cb(_prog[0], _prog[1])
+            await asyncio.sleep(1.5)
+
+    mon = asyncio.create_task(_monitor())
+
+    def _dl():
+        try:
+            with yt_dlp.YoutubeDL(ydl_opts) as ydl:
+                _info[0] = ydl.extract_info(url, download=True)
+        except Exception as exc:
+            _error[0] = exc
+
+    await loop.run_in_executor(None, _dl)
+    _done_event.set()
+    mon.cancel()
+    try:
+        await mon
+    except asyncio.CancelledError:
+        pass
+
+    if _error[0]:
+        shutil.rmtree(tmp_dir, ignore_errors=True)
+        raise _error[0]
+
+    if cancelled_check and cancelled_check():
+        shutil.rmtree(tmp_dir, ignore_errors=True)
+        raise UploadCancelled()
+
+    files = [f for f in Path(tmp_dir).iterdir() if f.is_file()]
+    if not files:
+        shutil.rmtree(tmp_dir, ignore_errors=True)
+        raise Exception("yt-dlp: فایلی دانلود نشد.")
+
+    dl_file = sorted(files, key=lambda f: f.stat().st_size, reverse=True)[0]
+    size = dl_file.stat().st_size
+
+    if size > _MAX_BYTES:
+        shutil.rmtree(tmp_dir, ignore_errors=True)
+        raise FileTooLargeError(f"حجم ویدیو بیشتر از {MAX_FILE_SIZE_MB // 1024} گیگابایت است.")
+
+    filename = dl_file.name
+    ext = dl_file.suffix.lstrip(".").lower()
+    _mime_map = {
+        "mp4": "video/mp4", "webm": "video/webm", "mkv": "video/x-matroska",
+        "mp3": "audio/mpeg", "m4a": "audio/mp4", "ogg": "audio/ogg",
+    }
+    mime_type = _mime_map.get(ext, "video/mp4")
+
+    # Move out of tmp_dir so we can clean it up
+    out_tmp = tempfile.NamedTemporaryFile(delete=False, suffix=f"_ytdl{dl_file.suffix}")
+    out_tmp.close()
+    shutil.move(str(dl_file), out_tmp.name)
+    shutil.rmtree(tmp_dir, ignore_errors=True)
+
+    return Path(out_tmp.name), filename, mime_type, size
 
 
 async def download_telegram_file(

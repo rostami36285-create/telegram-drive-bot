@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import html as _html
 import logging
 import os
 import time
@@ -11,8 +12,8 @@ from telegram import Bot, InlineKeyboardButton, InlineKeyboardMarkup
 
 import database.db as db
 from services.drive import (
-    download_url, download_telegram_file, upload_file,
-    FileTooLargeError, UploadCancelled,
+    download_url, download_telegram_file, download_youtube, upload_file,
+    is_youtube_url, FileTooLargeError, UploadCancelled,
 )
 from config import MAX_CONCURRENT_UPLOADS, MAX_QUEUE_SIZE, DAILY_UPLOAD_LIMIT
 
@@ -45,7 +46,7 @@ class UploadQueue:
     def __init__(self):
         self._q: asyncio.Queue[UploadTask] = asyncio.Queue(maxsize=MAX_QUEUE_SIZE)
         self._workers: list[asyncio.Task] = []
-        self._uploading: dict[int, UploadTask] = {}  # user_id -> active task
+        self._uploading: dict[int, UploadTask] = {}
 
     @property
     def pending(self) -> int:
@@ -83,9 +84,10 @@ class UploadQueue:
                 logger.exception("Worker uncaught error for user %s", task.user_id)
                 try:
                     await bot.edit_message_text(
-                        f"❌ خطای غیرمنتظره:\n{exc}",
+                        f"❌ خطای غیرمنتظره:\n{_html.escape(str(exc))}",
                         chat_id=task.chat_id,
                         message_id=task.status_msg_id,
+                        parse_mode="HTML",
                     )
                 except Exception:
                     pass
@@ -94,19 +96,19 @@ class UploadQueue:
                 self._q.task_done()
 
     async def _process(self, task: UploadTask, bot: Bot):
-        loop = asyncio.get_event_loop()
+        loop = asyncio.get_running_loop()
 
         _last_edit = [0.0]
         _last_pct = [-1]
 
-        async def status(text: str, markup=None, md: bool = False):
+        async def status(text: str, markup=None, parse_mode: str | None = None):
             try:
                 await bot.edit_message_text(
                     text,
                     chat_id=task.chat_id,
                     message_id=task.status_msg_id,
                     reply_markup=markup,
-                    parse_mode="Markdown" if md else None,
+                    parse_mode=parse_mode,
                 )
             except Exception:
                 pass
@@ -139,12 +141,20 @@ class UploadQueue:
         try:
             # ── Download ──────────────────────────────────────
             if task.upload_type == "link":
-                await status("⏬ در حال دانلود از لینک...", markup=_CANCEL_KB)
-                tmp_path, filename, mime_type, size = await download_url(
-                    task.source,
-                    progress_cb=lambda d, t: progress(d, t, "⏬ در حال دانلود از لینک..."),
-                    cancelled_check=lambda: task.cancelled,
-                )
+                if is_youtube_url(task.source):
+                    await status("⏬ در حال دانلود ویدیو از یوتیوب...", markup=_CANCEL_KB)
+                    tmp_path, filename, mime_type, size = await download_youtube(
+                        task.source,
+                        progress_cb=lambda d, t: progress(d, t, "⏬ در حال دانلود از یوتیوب..."),
+                        cancelled_check=lambda: task.cancelled,
+                    )
+                else:
+                    await status("⏬ در حال دانلود از لینک...", markup=_CANCEL_KB)
+                    tmp_path, filename, mime_type, size = await download_url(
+                        task.source,
+                        progress_cb=lambda d, t: progress(d, t, "⏬ در حال دانلود از لینک..."),
+                        cancelled_check=lambda: task.cancelled,
+                    )
             else:
                 await status("⏬ در حال دریافت فایل از تلگرام...", markup=_CANCEL_KB)
                 tmp_path, filename, size = await download_telegram_file(
@@ -214,14 +224,16 @@ class UploadQueue:
             uploaded_mb = int(file_meta.get("size", size)) / (1024 * 1024)
             remaining = DAILY_UPLOAD_LIMIT - used - 1
 
+            view_link = file_meta["webViewLink"]
+            dl_link = file_meta["webContentLink"]
             await status(
-                f"✅ *آپلود موفق!*\n\n"
-                f"📁 نام: `{filename}`\n"
+                f"✅ <b>آپلود موفق!</b>\n\n"
+                f"📁 نام: <code>{_html.escape(filename)}</code>\n"
                 f"📦 حجم: {uploaded_mb:.2f} MB\n\n"
-                f"🔗 [مشاهده در گوگل درایو]({file_meta['webViewLink']})\n"
-                f"⬇️ [دانلود مستقیم]({file_meta['webContentLink']})\n\n"
+                f'🔗 <a href="{view_link}">مشاهده در گوگل درایو</a>\n'
+                f'⬇️ <a href="{dl_link}">دانلود مستقیم</a>\n\n'
                 f"📊 آپلودهای باقی‌مانده امروز: {remaining}",
-                md=True,
+                parse_mode="HTML",
             )
 
         except UploadCancelled:
@@ -230,7 +242,7 @@ class UploadQueue:
             await status(str(e))
         except Exception as e:
             logger.exception("Upload failed for user %s", task.user_id)
-            await status(f"❌ خطا در آپلود:\n{e}")
+            await status(f"❌ خطا در آپلود:\n{_html.escape(str(e))}", parse_mode="HTML")
         finally:
             if tmp_path and tmp_path.exists():
                 try:
