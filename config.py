@@ -29,6 +29,11 @@ MAX_QUEUE_SIZE = int(os.getenv("MAX_QUEUE_SIZE", "50"))
 RATE_LIMIT_REQUESTS = int(os.getenv("RATE_LIMIT_REQUESTS", "5"))   # max requests
 RATE_LIMIT_WINDOW = int(os.getenv("RATE_LIMIT_WINDOW", "10"))       # per N seconds
 
-# ── Web server (OAuth callback) ───────────────────────────────
-SERVER_HOST = os.getenv("SERVER_HOST", "0.0.0.0")
+# ── Webhook (set by install.sh when a domain is configured) ──
+# Leave empty to use polling mode (development / no domain)
+WEBHOOK_URL = os.getenv("WEBHOOK_URL", "")           # e.g. https://example.com
+WEBHOOK_SECRET = os.getenv("WEBHOOK_SECRET", "")     # random hex, auto-generated
+
+# ── Web server (OAuth callback + webhook receiver) ────────────
+SERVER_HOST = os.getenv("SERVER_HOST", "127.0.0.1")  # behind Nginx: bind only loopback
 SERVER_PORT = int(os.getenv("SERVER_PORT", "8080"))

@@ -3,12 +3,14 @@ from __future__ import annotations
 import logging
 from typing import Callable
 
-from fastapi import APIRouter, Request
+from fastapi import APIRouter, Request, Response
 from fastapi.responses import HTMLResponse
+from telegram import Update
 from telegram.ext import Application
 
 import database.db as db
 from services.auth import exchange_code
+from config import TELEGRAM_BOT_TOKEN, WEBHOOK_SECRET
 
 logger = logging.getLogger(__name__)
 
@@ -31,6 +33,30 @@ _ERR = """<!doctype html><html dir="rtl" lang="fa">
 def create_router(get_app: Callable[[], Application | None]) -> APIRouter:
     router = APIRouter()
 
+    # ── Telegram webhook receiver ─────────────────────────────
+    @router.post(f"/webhook/{TELEGRAM_BOT_TOKEN}")
+    async def telegram_webhook(request: Request):
+        # Verify secret token sent by Telegram
+        if WEBHOOK_SECRET:
+            incoming = request.headers.get("X-Telegram-Bot-Api-Secret-Token", "")
+            if incoming != WEBHOOK_SECRET:
+                logger.warning("Webhook: invalid secret token from %s", request.client)
+                return Response(status_code=403)
+
+        app = get_app()
+        if app is None:
+            return Response(status_code=503)
+
+        try:
+            data = await request.json()
+            update = Update.de_json(data, app.bot)
+            await app.process_update(update)
+        except Exception:
+            logger.exception("Error processing webhook update")
+            # Return 200 anyway so Telegram doesn't retry indefinitely
+        return Response(status_code=200)
+
+    # ── Google OAuth callback ─────────────────────────────────
     @router.get("/oauth/callback")
     async def oauth_callback(request: Request):
         code = request.query_params.get("code")
@@ -62,10 +88,7 @@ def create_router(get_app: Callable[[], Application | None]) -> APIRouter:
             try:
                 await app.bot.send_message(
                     chat_id=user_id,
-                    text=(
-                        "✅ **اتصال به گوگل درایو موفق!**\n\n"
-                        "حالا می‌توانید فایل‌هایتان را آپلود کنید."
-                    ),
+                    text="✅ **اتصال به گوگل درایو موفق!**\n\nحالا می‌توانید فایل‌هایتان را آپلود کنید.",
                     parse_mode="Markdown",
                 )
             except Exception:
@@ -73,6 +96,7 @@ def create_router(get_app: Callable[[], Application | None]) -> APIRouter:
 
         return HTMLResponse(_OK)
 
+    # ── Health check ──────────────────────────────────────────
     @router.get("/health")
     async def health():
         return {"status": "ok"}
