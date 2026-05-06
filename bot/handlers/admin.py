@@ -6,8 +6,8 @@ from telegram import Update
 from telegram.ext import ContextTypes
 
 import database.db as db
-from bot.keyboards import admin_menu, admin_user_actions, main_menu, back_to_menu
-from bot.states import IDLE, ADMIN_SEARCH
+from bot.keyboards import admin_menu, admin_user_actions, channels_manage, main_menu, back_to_menu
+from bot.states import IDLE, ADMIN_SEARCH, ADMIN_ADD_CHANNEL
 from config import ADMIN_IDS
 
 logger = logging.getLogger(__name__)
@@ -78,9 +78,96 @@ async def admin_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
             reply_markup=admin_menu(),
         )
 
+    elif action == "admin:channels":
+        await _show_channels(query)
+
+    elif action == "admin:addchan":
+        context.user_data["state"] = ADMIN_ADD_CHANNEL
+        await query.edit_message_text(
+            "📢 **افزودن کانال اجباری**\n\n"
+            "یوزرنیم یا شناسه عددی کانال را بفرستید:\n"
+            "مثال: `@mychannel` یا `-1001234567890`\n\n"
+            "⚠️ ربات باید ادمین آن کانال باشد تا بتواند عضویت را بررسی کند.",
+            parse_mode="Markdown",
+            reply_markup=back_to_menu(),
+        )
+
+    elif action.startswith("admin:rmchan:"):
+        # split max 3 parts to handle channel IDs with colons (e.g. numeric)
+        channel_id = action.split(":", 2)[2]
+        await db.remove_required_channel(channel_id)
+        await _show_channels(query, notice=f"✅ کانال `{channel_id}` حذف شد.")
+
     elif action == "admin:menu":
         context.user_data["state"] = IDLE
         await query.edit_message_text("🛡 **پنل مدیریت**", parse_mode="Markdown", reply_markup=admin_menu())
+
+
+async def _show_channels(query, notice: str = ""):
+    channels = await db.get_required_channels()
+    if channels:
+        lines = "\n".join(
+            f"▪️ {ch['title'] or ch['channel_id']}  (`{ch['channel_id']}`)"
+            for ch in channels
+        )
+        header = f"📢 **کانال‌های اجباری** ({len(channels)} عدد)\n\n{lines}"
+    else:
+        header = "📢 **کانال‌های اجباری**\n\nهیچ کانالی تنظیم نشده است."
+
+    if notice:
+        header = f"{notice}\n\n{header}"
+
+    await query.edit_message_text(
+        header,
+        parse_mode="Markdown",
+        reply_markup=channels_manage(channels),
+    )
+
+
+async def handle_admin_add_channel(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if context.user_data.get("state") != ADMIN_ADD_CHANNEL:
+        return
+    if not _is_admin(update.effective_user.id):
+        return
+
+    raw = update.message.text.strip()
+    # Normalize: add @ if it looks like a username without it
+    if not raw.startswith("@") and not raw.startswith("-") and not raw.lstrip("-").isdigit():
+        raw = f"@{raw}"
+
+    # Validate via Telegram API and fetch real title
+    try:
+        chat = await update.get_bot().get_chat(raw)
+        title = chat.title or raw
+        channel_id = f"@{chat.username}" if chat.username else str(chat.id)
+    except Exception:
+        await update.message.reply_text(
+            f"❌ نمی‌توانم کانال `{raw}` را پیدا کنم.\n"
+            "مطمئن شوید ربات عضو/ادمین کانال است.",
+            parse_mode="Markdown",
+            reply_markup=back_to_menu(),
+        )
+        return
+
+    added = await db.add_required_channel(channel_id, title)
+    context.user_data["state"] = IDLE
+
+    if added:
+        channels = await db.get_required_channels()
+        await update.message.reply_text(
+            f"✅ کانال **{title}** (`{channel_id}`) اضافه شد.\n\n"
+            f"📢 اکنون {len(channels)} کانال اجباری دارید.",
+            parse_mode="Markdown",
+            reply_markup=channels_manage(channels),
+        )
+        # Update title in DB if bot fetched a fresher name
+        await db.update_channel_title(channel_id, title)
+    else:
+        await update.message.reply_text(
+            f"⚠️ کانال `{channel_id}` از قبل در لیست است.",
+            parse_mode="Markdown",
+            reply_markup=back_to_menu(),
+        )
 
 
 async def handle_admin_search(update: Update, context: ContextTypes.DEFAULT_TYPE):

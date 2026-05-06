@@ -8,21 +8,22 @@ from telegram.error import TelegramError
 import database.db as db
 from bot.keyboards import main_menu, check_membership
 from bot.states import IDLE
-from config import REQUIRED_CHANNELS
 
 logger = logging.getLogger(__name__)
 
 
 async def _check_channels(bot, user_id: int) -> list[str]:
-    """Returns list of channel IDs the user has NOT joined."""
+    """Returns list of channel IDs (from DB) the user has NOT joined."""
+    channels = await db.get_required_channels()
     not_joined = []
-    for ch in REQUIRED_CHANNELS:
+    for ch in channels:
+        cid = ch["channel_id"]
         try:
-            member = await bot.get_chat_member(chat_id=ch, user_id=user_id)
+            member = await bot.get_chat_member(chat_id=cid, user_id=user_id)
             if member.status in ("left", "kicked", "banned"):
-                not_joined.append(ch)
+                not_joined.append(cid)
         except TelegramError:
-            not_joined.append(ch)
+            not_joined.append(cid)
     return not_joined
 
 

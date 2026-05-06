@@ -51,9 +51,21 @@ def files_nav(offset: int, total: int, page_size: int = 10) -> Markup:
 def admin_menu() -> Markup:
     return Markup([
         [Btn("🔍 جستجوی کاربر", callback_data="admin:search")],
+        [Btn("📢 مدیریت کانال‌های اجباری", callback_data="admin:channels")],
         [Btn("📊 آمار کلی", callback_data="admin:stats")],
         [Btn("🏠 منوی اصلی", callback_data="main_menu")],
     ])
+
+
+def channels_manage(channels: list[dict]) -> Markup:
+    """List of required channels with remove buttons + add button."""
+    rows = []
+    for ch in channels:
+        label = ch["title"] or ch["channel_id"]
+        rows.append([Btn(f"❌ {label}", callback_data=f"admin:rmchan:{ch['channel_id']}")])
+    rows.append([Btn("➕ افزودن کانال جدید", callback_data="admin:addchan")])
+    rows.append([Btn("🔙 بازگشت به پنل ادمین", callback_data="admin:menu")])
+    return Markup(rows)
 
 
 def admin_user_actions(user_id: int, is_blocked: bool) -> Markup:

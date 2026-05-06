@@ -7,7 +7,7 @@ from .upload import (
     handle_url_message, handle_file_message,
 )
 from .files import files_callback
-from .admin import admin_command, admin_callback, handle_admin_search
+from .admin import admin_command, admin_callback, handle_admin_search, handle_admin_add_channel
 from bot.keyboards import main_menu
 from bot.states import IDLE
 
@@ -50,3 +50,5 @@ async def _route_text(update, context):
         await handle_url_message(update, context)
     elif state == "admin_search":
         await handle_admin_search(update, context)
+    elif state == "admin_add_channel":
+        await handle_admin_add_channel(update, context)

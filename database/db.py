@@ -4,7 +4,7 @@ import aiosqlite
 from datetime import date
 from typing import Optional
 
-from config import DATABASE_PATH
+from config import DATABASE_PATH, REQUIRED_CHANNELS
 from database.encryption import encrypt, decrypt
 
 
@@ -55,10 +55,26 @@ async def init_db():
                 user_id     INTEGER   NOT NULL,
                 created_at  TIMESTAMP DEFAULT CURRENT_TIMESTAMP
             );
+
+            CREATE TABLE IF NOT EXISTS required_channels (
+                id          INTEGER PRIMARY KEY AUTOINCREMENT,
+                channel_id  TEXT    NOT NULL UNIQUE,
+                title       TEXT    DEFAULT '',
+                added_at    TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            );
         """)
 
         # Purge stale OAuth states
         await db.execute("DELETE FROM oauth_states WHERE created_at < datetime('now', '-15 minutes')")
+
+        # Seed required_channels from config if the table is empty
+        async with db.execute("SELECT COUNT(*) FROM required_channels") as cur:
+            if (await cur.fetchone())[0] == 0 and REQUIRED_CHANNELS:
+                for ch in REQUIRED_CHANNELS:
+                    await db.execute(
+                        "INSERT OR IGNORE INTO required_channels (channel_id) VALUES (?)", (ch,)
+                    )
+
         await db.commit()
 
 
@@ -269,3 +285,45 @@ async def pop_oauth_state(state: str) -> Optional[int]:
         await db.execute("DELETE FROM oauth_states WHERE state=?", (state,))
         await db.commit()
         return row[0]
+
+
+# ── Required channels ─────────────────────────────────────────
+
+async def get_required_channels() -> list[dict]:
+    async with aiosqlite.connect(DATABASE_PATH) as db:
+        db.row_factory = aiosqlite.Row
+        async with db.execute(
+            "SELECT * FROM required_channels ORDER BY added_at"
+        ) as cur:
+            return [dict(r) for r in await cur.fetchall()]
+
+
+async def add_required_channel(channel_id: str, title: str = "") -> bool:
+    """Returns False if channel already exists."""
+    try:
+        async with aiosqlite.connect(DATABASE_PATH) as db:
+            await db.execute(
+                "INSERT INTO required_channels (channel_id, title) VALUES (?, ?)",
+                (channel_id, title),
+            )
+            await db.commit()
+        return True
+    except aiosqlite.IntegrityError:
+        return False
+
+
+async def update_channel_title(channel_id: str, title: str):
+    async with aiosqlite.connect(DATABASE_PATH) as db:
+        await db.execute(
+            "UPDATE required_channels SET title=? WHERE channel_id=?",
+            (title, channel_id),
+        )
+        await db.commit()
+
+
+async def remove_required_channel(channel_id: str):
+    async with aiosqlite.connect(DATABASE_PATH) as db:
+        await db.execute(
+            "DELETE FROM required_channels WHERE channel_id=?", (channel_id,)
+        )
+        await db.commit()
