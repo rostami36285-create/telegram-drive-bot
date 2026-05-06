@@ -18,3 +18,11 @@ def encrypt(data: dict) -> str:
 
 def decrypt(token: str) -> dict:
     return json.loads(_cipher().decrypt(token.encode()).decode())
+
+
+def encrypt_str(value: str) -> str:
+    return _cipher().encrypt(value.encode()).decode()
+
+
+def decrypt_str(token: str) -> str:
+    return _cipher().decrypt(token.encode()).decode()

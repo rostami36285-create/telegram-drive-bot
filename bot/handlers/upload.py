@@ -12,7 +12,7 @@ import database.db as db
 from bot.keyboards import main_menu, cancel_and_menu, connect_drive
 from bot.states import IDLE, WAIT_URL, WAIT_FILE
 from bot.rate_limiter import limiter
-from services.auth import get_auth_url
+from services.auth import get_auth_url, has_oauth_config
 from services.queue import UploadTask, QueueFullError
 from config import DAILY_UPLOAD_LIMIT, MAX_FILE_SIZE_MB
 
@@ -65,9 +65,21 @@ async def _ensure_oauth(update: Update, context: ContextTypes.DEFAULT_TYPE) -> b
     if await db.has_tokens(user_id):
         return True
 
+    if not await has_oauth_config():
+        query = update.callback_query
+        txt = (
+            "⚠️ **OAuth گوگل تنظیم نشده است.**\n\n"
+            "ادمین باید ابتدا Client ID و Client Secret گوگل را از پنل ادمین وارد کند."
+        )
+        if query:
+            await query.edit_message_text(txt, parse_mode="Markdown", reply_markup=main_menu())
+        else:
+            await update.message.reply_text(txt, parse_mode="Markdown", reply_markup=main_menu())
+        return False
+
     state = secrets.token_urlsafe(32)
     await db.save_oauth_state(state, user_id)
-    auth_url = get_auth_url(state)
+    auth_url = await get_auth_url(state)
 
     query = update.callback_query
     text = (

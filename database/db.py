@@ -5,7 +5,7 @@ from datetime import date
 from typing import Optional
 
 from config import DATABASE_PATH, REQUIRED_CHANNELS
-from database.encryption import encrypt, decrypt
+from database.encryption import encrypt, decrypt, encrypt_str, decrypt_str
 
 
 # ── Schema ────────────────────────────────────────────────────
@@ -61,6 +61,12 @@ async def init_db():
                 channel_id  TEXT    NOT NULL UNIQUE,
                 title       TEXT    DEFAULT '',
                 added_at    TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            );
+
+            CREATE TABLE IF NOT EXISTS app_settings (
+                key         TEXT PRIMARY KEY,
+                value       TEXT NOT NULL,
+                updated_at  TIMESTAMP DEFAULT CURRENT_TIMESTAMP
             );
         """)
 
@@ -321,9 +327,79 @@ async def update_channel_title(channel_id: str, title: str):
         await db.commit()
 
 
+async def get_all_users(limit: int = 15, offset: int = 0) -> list[dict]:
+    async with aiosqlite.connect(DATABASE_PATH) as db:
+        db.row_factory = aiosqlite.Row
+        async with db.execute(
+            "SELECT * FROM users ORDER BY joined_at DESC LIMIT ? OFFSET ?",
+            (limit, offset),
+        ) as cur:
+            return [dict(r) for r in await cur.fetchall()]
+
+
+async def get_upload_by_id(upload_id: int) -> Optional[dict]:
+    async with aiosqlite.connect(DATABASE_PATH) as db:
+        db.row_factory = aiosqlite.Row
+        async with db.execute("SELECT * FROM uploads WHERE id=?", (upload_id,)) as cur:
+            row = await cur.fetchone()
+            return dict(row) if row else None
+
+
+async def delete_upload_record(upload_id: int):
+    async with aiosqlite.connect(DATABASE_PATH) as db:
+        db.row_factory = aiosqlite.Row
+        async with db.execute(
+            "SELECT user_id, file_size, upload_type FROM uploads WHERE id=?", (upload_id,)
+        ) as cur:
+            row = await cur.fetchone()
+        if not row:
+            return
+        col = "total_link_ups" if row["upload_type"] == "link" else "total_file_ups"
+        await db.execute(
+            f"UPDATE users SET "
+            f"total_uploads=MAX(0,total_uploads-1), "
+            f"{col}=MAX(0,{col}-1), "
+            f"total_size_bytes=MAX(0,total_size_bytes-?) "
+            f"WHERE user_id=?",
+            (row["file_size"], row["user_id"]),
+        )
+        await db.execute("DELETE FROM uploads WHERE id=?", (upload_id,))
+        await db.commit()
+
+
 async def remove_required_channel(channel_id: str):
     async with aiosqlite.connect(DATABASE_PATH) as db:
         await db.execute(
             "DELETE FROM required_channels WHERE channel_id=?", (channel_id,)
         )
+        await db.commit()
+
+
+# ── App settings (encrypted for sensitive keys) ───────────────
+
+async def get_app_setting(key: str, *, encrypted: bool = False) -> Optional[str]:
+    async with aiosqlite.connect(DATABASE_PATH) as db:
+        async with db.execute(
+            "SELECT value FROM app_settings WHERE key=?", (key,)
+        ) as cur:
+            row = await cur.fetchone()
+    if not row:
+        return None
+    return decrypt_str(row[0]) if encrypted else row[0]
+
+
+async def set_app_setting(key: str, value: str, *, encrypted: bool = False):
+    stored = encrypt_str(value) if encrypted else value
+    async with aiosqlite.connect(DATABASE_PATH) as db:
+        await db.execute(
+            """INSERT OR REPLACE INTO app_settings (key, value, updated_at)
+               VALUES (?, ?, CURRENT_TIMESTAMP)""",
+            (key, stored),
+        )
+        await db.commit()
+
+
+async def delete_app_setting(key: str):
+    async with aiosqlite.connect(DATABASE_PATH) as db:
+        await db.execute("DELETE FROM app_settings WHERE key=?", (key,))
         await db.commit()

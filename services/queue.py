@@ -3,16 +3,24 @@ from __future__ import annotations
 import asyncio
 import logging
 import os
+import time
 from dataclasses import dataclass, field
 from pathlib import Path
 
-from telegram import Bot
+from telegram import Bot, InlineKeyboardButton, InlineKeyboardMarkup
 
 import database.db as db
-from services.drive import download_url, download_telegram_file, upload_file, FileTooLargeError
+from services.drive import (
+    download_url, download_telegram_file, upload_file,
+    FileTooLargeError, UploadCancelled,
+)
 from config import MAX_CONCURRENT_UPLOADS, MAX_QUEUE_SIZE, DAILY_UPLOAD_LIMIT
 
 logger = logging.getLogger(__name__)
+
+_CANCEL_KB = InlineKeyboardMarkup(
+    [[InlineKeyboardButton("❌ لغو آپلود", callback_data="cancel_upload")]]
+)
 
 
 @dataclass
@@ -21,11 +29,12 @@ class UploadTask:
     chat_id: int
     status_msg_id: int
     upload_type: str          # "link" | "file"
-    source: str               # URL or Telegram file_path URL
+    source: str
     filename: str = ""
     mime_type: str = "application/octet-stream"
     file_size: int = 0
     tokens: dict = field(default_factory=dict)
+    cancelled: bool = False
 
 
 class QueueFullError(Exception):
@@ -36,10 +45,21 @@ class UploadQueue:
     def __init__(self):
         self._q: asyncio.Queue[UploadTask] = asyncio.Queue(maxsize=MAX_QUEUE_SIZE)
         self._workers: list[asyncio.Task] = []
+        self._uploading: dict[int, UploadTask] = {}  # user_id -> active task
 
     @property
     def pending(self) -> int:
         return self._q.qsize()
+
+    def is_uploading(self, user_id: int) -> bool:
+        return user_id in self._uploading
+
+    def cancel_upload(self, user_id: int) -> bool:
+        task = self._uploading.get(user_id)
+        if task:
+            task.cancelled = True
+            return True
+        return False
 
     async def start(self, bot: Bot):
         for _ in range(MAX_CONCURRENT_UPLOADS):
@@ -48,7 +68,6 @@ class UploadQueue:
         logger.info("Upload queue started (%d workers)", MAX_CONCURRENT_UPLOADS)
 
     async def enqueue(self, task: UploadTask) -> int:
-        """Returns queue position. Raises QueueFullError if full."""
         if self._q.full():
             raise QueueFullError()
         await self._q.put(task)
@@ -57,6 +76,7 @@ class UploadQueue:
     async def _worker(self, bot: Bot):
         while True:
             task = await self._q.get()
+            self._uploading[task.user_id] = task
             try:
                 await self._process(task, bot)
             except Exception as exc:
@@ -70,57 +90,121 @@ class UploadQueue:
                 except Exception:
                     pass
             finally:
+                self._uploading.pop(task.user_id, None)
                 self._q.task_done()
 
     async def _process(self, task: UploadTask, bot: Bot):
-        async def status(text: str):
+        loop = asyncio.get_event_loop()
+
+        _last_edit = [0.0]
+        _last_pct = [-1]
+
+        async def status(text: str, markup=None, md: bool = False):
             try:
-                await bot.edit_message_text(text, chat_id=task.chat_id, message_id=task.status_msg_id)
+                await bot.edit_message_text(
+                    text,
+                    chat_id=task.chat_id,
+                    message_id=task.status_msg_id,
+                    reply_markup=markup,
+                    parse_mode="Markdown" if md else None,
+                )
             except Exception:
                 pass
 
-        # Re-check daily limit (user may have uploaded while in queue)
+        async def progress(downloaded: int, total: int, stage: str):
+            if total <= 0:
+                return
+            pct = min(99, int(downloaded / total * 100))
+            now = time.monotonic()
+            if pct - _last_pct[0] < 4 and now - _last_edit[0] < 2.5:
+                return
+            _last_pct[0] = pct
+            _last_edit[0] = now
+            filled = pct // 5
+            bar = "▓" * filled + "░" * (20 - filled)
+            await status(f"{stage}\n[{bar}] {pct}%", markup=_CANCEL_KB)
+
+        # Re-check daily limit
         can, used = await db.check_daily_limit(task.user_id, DAILY_UPLOAD_LIMIT)
         if not can:
-            await status(
-                f"❌ محدودیت روزانه ({DAILY_UPLOAD_LIMIT} فایل) پر شده است.\n"
-                "فردا دوباره امتحان کنید."
-            )
+            await status(f"❌ محدودیت روزانه ({DAILY_UPLOAD_LIMIT} فایل) پر شده است.\nفردا دوباره امتحان کنید.")
             return
 
-        # Re-fetch tokens (may have been refreshed by another task)
         tokens = await db.get_tokens(task.user_id)
         if not tokens:
-            await status("❌ اتصال به گوگل درایو قطع شده. لطفاً دوباره /start بزنید و OAuth را انجام دهید.")
+            await status("❌ اتصال به گوگل درایو قطع شده. لطفاً /start بزنید و دوباره وصل شوید.")
             return
 
         tmp_path: Path | None = None
         try:
             # ── Download ──────────────────────────────────────
             if task.upload_type == "link":
-                await status("⏬ در حال دانلود از لینک...")
-                tmp_path, filename, mime_type, size = await download_url(task.source)
+                await status("⏬ در حال دانلود از لینک...", markup=_CANCEL_KB)
+                tmp_path, filename, mime_type, size = await download_url(
+                    task.source,
+                    progress_cb=lambda d, t: progress(d, t, "⏬ در حال دانلود از لینک..."),
+                    cancelled_check=lambda: task.cancelled,
+                )
             else:
-                await status("⏬ در حال دریافت فایل از تلگرام...")
+                await status("⏬ در حال دریافت فایل از تلگرام...", markup=_CANCEL_KB)
                 tmp_path, filename, size = await download_telegram_file(
-                    task.source, task.filename, task.file_size
+                    task.source, task.filename, task.file_size,
+                    progress_cb=lambda d, t: progress(d, t, "⏬ در حال دریافت از تلگرام..."),
+                    cancelled_check=lambda: task.cancelled,
                 )
                 mime_type = task.mime_type
 
-            size_mb = size / (1024 * 1024)
-            await status(f"⬆️ در حال آپلود به گوگل درایو...\n📁 {filename} ({size_mb:.1f} MB)")
+            if task.cancelled:
+                raise UploadCancelled()
 
-            # ── Upload to Drive (blocking I/O in executor) ────
-            loop = asyncio.get_event_loop()
-            file_meta, updated_tokens = await loop.run_in_executor(
-                None, upload_file, tokens, tmp_path, filename, mime_type
+            # ── Upload — async monitor reads sync progress ────
+            _upload_pct = [0]
+
+            def _sync_progress(uploaded: int, total: int):
+                if total > 0:
+                    _upload_pct[0] = min(99, int(uploaded / total * 100))
+
+            size_mb = size / (1024 * 1024)
+            await status(
+                f"⬆️ در حال آپلود به گوگل درایو...\n📁 {filename} ({size_mb:.1f} MB)",
+                markup=_CANCEL_KB,
             )
 
-            # Persist refreshed tokens
+            async def _monitor():
+                last = -1
+                while True:
+                    await asyncio.sleep(2.5)
+                    pct = _upload_pct[0]
+                    if pct == last or pct <= 0:
+                        continue
+                    last = pct
+                    filled = pct // 5
+                    bar = "▓" * filled + "░" * (20 - filled)
+                    await status(
+                        f"⬆️ در حال آپلود به گوگل درایو...\n[{bar}] {pct}%",
+                        markup=_CANCEL_KB,
+                    )
+
+            monitor = asyncio.create_task(_monitor())
+            try:
+                file_meta, updated_tokens = await loop.run_in_executor(
+                    None,
+                    lambda: upload_file(
+                        tokens, tmp_path, filename, mime_type,
+                        sync_progress_cb=_sync_progress,
+                        cancelled_check=lambda: task.cancelled,
+                    ),
+                )
+            finally:
+                monitor.cancel()
+                try:
+                    await monitor
+                except asyncio.CancelledError:
+                    pass
+
             if updated_tokens.get("token") != tokens.get("token"):
                 await db.save_tokens(task.user_id, updated_tokens)
 
-            # Record in DB
             await db.increment_daily(task.user_id)
             await db.record_upload(
                 task.user_id, filename, size, task.upload_type,
@@ -131,14 +215,17 @@ class UploadQueue:
             remaining = DAILY_UPLOAD_LIMIT - used - 1
 
             await status(
-                f"✅ آپلود موفق!\n\n"
-                f"📁 نام: {filename}\n"
+                f"✅ *آپلود موفق!*\n\n"
+                f"📁 نام: `{filename}`\n"
                 f"📦 حجم: {uploaded_mb:.2f} MB\n\n"
                 f"🔗 [مشاهده در گوگل درایو]({file_meta['webViewLink']})\n"
                 f"⬇️ [دانلود مستقیم]({file_meta['webContentLink']})\n\n"
-                f"📊 آپلودهای باقی‌مانده امروز: {remaining}"
+                f"📊 آپلودهای باقی‌مانده امروز: {remaining}",
+                md=True,
             )
 
+        except UploadCancelled:
+            await status("⏹ آپلود لغو شد.")
         except FileTooLargeError as e:
             await status(str(e))
         except Exception as e:

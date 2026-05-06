@@ -78,7 +78,7 @@ def create_router(get_app: Callable[[], Application | None]) -> APIRouter:
             )
 
         try:
-            tokens = exchange_code(code)
+            tokens = await exchange_code(code)
         except Exception as e:
             logger.exception("Token exchange failed")
             return HTMLResponse(_ERR.format(msg=str(e)), status_code=500)

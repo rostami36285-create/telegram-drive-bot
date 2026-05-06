@@ -52,6 +52,20 @@ pkg_install() {
   esac
 }
 
+# ── تابع به‌روزرسانی امن .env ─────────────────────────────────
+# استفاده از فایل موقت تا از مشکل کاراکترهای خاص جلوگیری شود
+_env_set() {
+  local key="$1" val="$2"
+  if grep -q "^${key}=" "$ENV" 2>/dev/null; then
+    local tmp; tmp=$(mktemp)
+    grep -v "^${key}=" "$ENV" > "$tmp"
+    echo "${key}=${val}" >> "$tmp"
+    mv "$tmp" "$ENV"
+  else
+    echo "${key}=${val}" >> "$ENV"
+  fi
+}
+
 # ── پیش‌نیازهای پایه ─────────────────────────────────────────
 info "نصب پیش‌نیازها..."
 case "${ID:-}" in ubuntu|debian) apt-get update -qq ;; esac
@@ -94,54 +108,67 @@ if [[ -t 0 ]] && grep -q "your_telegram_bot_token_here" "$ENV" 2>/dev/null; then
   echo -e "${BOLD}  پیکربندی ربات${NC}"
   hr
 
-  # ── Telegram ─────────────────────────────────────────────
   ask "  📱 Telegram Bot Token:"; read -r TG_TOKEN
-  [[ -n "$TG_TOKEN" ]] && sed -i "s|your_telegram_bot_token_here|$TG_TOKEN|g" "$ENV"
+  [[ -n "$TG_TOKEN" ]] && _env_set "TELEGRAM_BOT_TOKEN" "$TG_TOKEN"
 
-  # ── ادمین و کانال‌ها ──────────────────────────────────────
   ask "  👤 Admin Telegram ID(s) (با کاما):"; read -r ADMINS
-  [[ -n "$ADMINS" ]] && sed -i "s|^ADMIN_IDS=.*|ADMIN_IDS=$ADMINS|" "$ENV"
+  [[ -n "$ADMINS" ]] && _env_set "ADMIN_IDS" "$ADMINS"
 
   ask "  📢 کانال‌های اجباری (اختیاری، مثال: @ch1,@ch2):"; read -r CHANNELS
-  [[ -n "$CHANNELS" ]] && sed -i "s|^REQUIRED_CHANNELS=.*|REQUIRED_CHANNELS=$CHANNELS|" "$ENV"
+  [[ -n "$CHANNELS" ]] && _env_set "REQUIRED_CHANNELS" "$CHANNELS"
 
-  # ── کلید رمزنگاری خودکار ─────────────────────────────────
+  # کلید رمزنگاری خودکار (اگر هنوز placeholder است)
+  if grep -q "your_fernet_key_here" "$ENV" 2>/dev/null; then
+    ENC_KEY=$("$VENV/bin/python3" -c "from cryptography.fernet import Fernet; print(Fernet.generate_key().decode())")
+    _env_set "ENCRYPTION_KEY" "$ENC_KEY"
+    success "کلید رمزنگاری ایجاد شد."
+  fi
+fi
+
+# کلید رمزنگاری را در هر صورت بررسی کن (برای نصب‌های غیر تعاملی)
+if grep -q "your_fernet_key_here" "$ENV" 2>/dev/null; then
   ENC_KEY=$("$VENV/bin/python3" -c "from cryptography.fernet import Fernet; print(Fernet.generate_key().decode())")
-  sed -i "s|your_fernet_key_here|$ENC_KEY|g" "$ENV"
+  _env_set "ENCRYPTION_KEY" "$ENC_KEY"
   success "کلید رمزنگاری ایجاد شد."
 fi
 
 # ══════════════════════════════════════════════════════════════
-#  دامنه — اجباری (ربات بدون دامنه راه‌اندازی نمی‌شود)
+#  دامنه — همیشه می‌پرسیم (bug fix: .env.example دیگر آدرس مثال ندارد)
 # ══════════════════════════════════════════════════════════════
 DOMAIN=""
 
-# اگر قبلاً در .env تنظیم شده، از آن بخوان
-if grep -q "^WEBHOOK_URL=https://" "$ENV" 2>/dev/null; then
-  DOMAIN=$(grep "^WEBHOOK_URL=" "$ENV" | sed 's|WEBHOOK_URL=https://||')
-  info "دامنه موجود در .env: $DOMAIN"
-fi
+if [[ -t 0 ]]; then
+  # دامنه فعلی از .env (اگر قبلاً نصب شده)
+  _current_domain=$(grep "^WEBHOOK_URL=https://" "$ENV" 2>/dev/null | sed 's|WEBHOOK_URL=https://||' || true)
 
-# اگر هنوز خالیه و ترمینال داریم، بپرس
-if [[ -z "$DOMAIN" && -t 0 ]]; then
   hr
   echo -e "${BOLD}  دامنه سرور — الزامی${NC}"
   echo "  ربات فقط با HTTPS/webhook کار می‌کند."
   echo "  مطمئن شوید DNS دامنه به IP این سرور اشاره می‌کند."
+  [[ -n "$_current_domain" ]] && echo -e "  دامنه فعلی: ${CYAN}$_current_domain${NC}"
   hr
+
   while [[ -z "$DOMAIN" ]]; do
-    ask "  🌐 دامنه (مثال: bot.example.com):"; read -r DOMAIN
-    [[ -z "$DOMAIN" ]] && warn "دامنه اجباری است — بدون دامنه نصب ممکن نیست."
+    if [[ -n "$_current_domain" ]]; then
+      ask "  🌐 دامنه [Enter برای نگه‌داشتن «$_current_domain»]:"; read -r _inp
+      DOMAIN="${_inp:-$_current_domain}"
+    else
+      ask "  🌐 دامنه (مثال: bot.example.com):"; read -r DOMAIN
+      [[ -z "$DOMAIN" ]] && warn "دامنه اجباری است — بدون دامنه نصب ممکن نیست."
+    fi
   done
+else
+  # اجرای غیر تعاملی: دامنه را از .env بخوان
+  DOMAIN=$(grep "^WEBHOOK_URL=https://" "$ENV" 2>/dev/null | sed 's|WEBHOOK_URL=https://||' || true)
 fi
 
 [[ -z "$DOMAIN" ]] && die "دامنه تنظیم نشده. WEBHOOK_URL را در $ENV بگذارید و دوباره اجرا کنید."
+info "دامنه: $DOMAIN"
 
 # ══════════════════════════════════════════════════════════════
-#  Nginx + SSL + Webhook
+#  Nginx + SSL
 # ══════════════════════════════════════════════════════════════
 
-# ── نصب Nginx + Certbot ──────────────────────────────────────
 info "نصب Nginx و Certbot..."
 case "${ID:-}" in
   ubuntu|debian) pkg_install nginx certbot python3-certbot-nginx ;;
@@ -154,27 +181,38 @@ success "Nginx راه‌اندازی شد."
 # ── حذف سایت پیش‌فرض ─────────────────────────────────────────
 rm -f /etc/nginx/sites-enabled/default 2>/dev/null || true
 
-# ── کانفیگ HTTP موقت برای تأیید دامنه ────────────────────────
-NGINX_CONF="/etc/nginx/sites-available/${SERVICE}"
+# ── تعیین مسیر کانفیگ Nginx (Debian vs RHEL) ─────────────────
+if [[ -d /etc/nginx/sites-available ]]; then
+  NGINX_CONF="/etc/nginx/sites-available/${SERVICE}"
+  NGINX_ENABLED_DIR="/etc/nginx/sites-enabled"
+else
+  NGINX_CONF="/etc/nginx/conf.d/${SERVICE}.conf"
+  NGINX_ENABLED_DIR=""
+fi
+
+# ── کانفیگ HTTP موقت برای تأیید Let's Encrypt ────────────────
 cat > "$NGINX_CONF" <<NGINXEOF
 server {
     listen 80;
     listen [::]:80;
     server_name ${DOMAIN};
     root /var/www/html;
-    location /.well-known/acme-challenge/ {}
+    location /.well-known/acme-challenge/ { try_files \$uri =404; }
     location / { return 301 https://\$host\$request_uri; }
 }
 NGINXEOF
-[[ -d /etc/nginx/sites-enabled ]] && ln -sf "$NGINX_CONF" "/etc/nginx/sites-enabled/${SERVICE}" || true
+
+[[ -n "$NGINX_ENABLED_DIR" ]] && ln -sf "$NGINX_CONF" "${NGINX_ENABLED_DIR}/${SERVICE}"
 nginx -t && systemctl reload nginx
 
 # ── گواهی SSL با Let's Encrypt ────────────────────────────────
 info "دریافت گواهی SSL برای $DOMAIN ..."
 certbot certonly \
-  --nginx -d "$DOMAIN" \
-  --non-interactive --agree-tos \
-  --email "admin@${DOMAIN}" --redirect \
+  --nginx \
+  -d "$DOMAIN" \
+  --non-interactive \
+  --agree-tos \
+  --email "admin@${DOMAIN}" \
   2>&1 || die "SSL شکست خورد.\n  ← DNS باید به این سرور اشاره کند.\n  ← پورت 80 باید باز باشد."
 success "گواهی SSL دریافت شد."
 
@@ -210,8 +248,6 @@ server {
     location / {
         proxy_pass          http://127.0.0.1:8080;
         proxy_http_version  1.1;
-        proxy_set_header    Upgrade \$http_upgrade;
-        proxy_set_header    Connection 'upgrade';
         proxy_set_header    Host \$host;
         proxy_set_header    X-Real-IP \$remote_addr;
         proxy_set_header    X-Forwarded-For \$proxy_add_x_forwarded_for;
@@ -221,19 +257,16 @@ server {
     }
 }
 NGINXEOF
+
 nginx -t && systemctl reload nginx
-success "Nginx با HTTPS کامل پیکربندی شد."
+success "Nginx با HTTPS پیکربندی شد."
 
-# ── به‌روزرسانی .env ──────────────────────────────────────────
+# ── به‌روزرسانی .env با تنظیمات دامنه ────────────────────────
 WH_SECRET=$(openssl rand -hex 32)
-
-_env_set() { grep -q "^$1=" "$ENV" && sed -i "s|^$1=.*|$1=$2|" "$ENV" || echo "$1=$2" >> "$ENV"; }
-
 _env_set "WEBHOOK_URL"        "https://${DOMAIN}"
 _env_set "WEBHOOK_SECRET"     "${WH_SECRET}"
 _env_set "OAUTH_REDIRECT_URI" "https://${DOMAIN}/oauth/callback"
 _env_set "SERVER_HOST"        "127.0.0.1"
-
 success ".env با تنظیمات دامنه به‌روز شد."
 
 # ── تمدید خودکار SSL ─────────────────────────────────────────
@@ -242,7 +275,7 @@ if systemctl list-timers --all 2>/dev/null | grep -q certbot; then
 else
   (crontab -l 2>/dev/null; echo "0 3 * * * certbot renew --quiet && systemctl reload nginx") \
     | sort -u | crontab -
-  success "تمدید SSL از طریق cron تنظیم شد (هر روز ۰۳:۰۰)."
+  success "تمدید SSL از طریق cron تنظیم شد."
 fi
 mkdir -p /etc/letsencrypt/renewal-hooks/deploy
 cat > /etc/letsencrypt/renewal-hooks/deploy/nginx-reload.sh <<'HOOKEOF'
@@ -254,7 +287,8 @@ chmod +x /etc/letsencrypt/renewal-hooks/deploy/nginx-reload.sh
 # ══════════════════════════════════════════════════════════════
 #  کاربر سیستمی + سرویس systemd
 # ══════════════════════════════════════════════════════════════
-id "$BOT_USER" &>/dev/null || useradd --system --no-create-home --shell /usr/sbin/nologin "$BOT_USER"
+NOLOGIN=$(command -v nologin 2>/dev/null || echo /usr/sbin/nologin)
+id "$BOT_USER" &>/dev/null || useradd --system --no-create-home --shell "$NOLOGIN" "$BOT_USER"
 chown -R "$BOT_USER:$BOT_USER" "$INSTALL_DIR"
 chmod 600 "$ENV"
 
@@ -284,11 +318,11 @@ systemctl enable "$SERVICE"
 success "سرویس systemd ثبت شد."
 
 # ══════════════════════════════════════════════════════════════
-#  راه‌اندازی + ثبت Webhook
+#  راه‌اندازی ربات
 # ══════════════════════════════════════════════════════════════
-TG_TOKEN_LIVE=$(grep "^TELEGRAM_BOT_TOKEN=" "$ENV" | cut -d'=' -f2 || true)
+TG_TOKEN_LIVE=$(grep "^TELEGRAM_BOT_TOKEN=" "$ENV" | cut -d'=' -f2- || true)
 
-if grep -q "your_telegram_bot_token_here" "$ENV" 2>/dev/null; then
+if [[ -z "$TG_TOKEN_LIVE" ]] || echo "$TG_TOKEN_LIVE" | grep -q "your_telegram_bot_token_here"; then
   warn "Telegram Token هنوز تنظیم نشده. سرویس شروع نمی‌شود."
   warn "  → sudo nano $ENV"
   warn "  → sudo systemctl start $SERVICE"
@@ -296,31 +330,38 @@ else
   systemctl restart "$SERVICE"
   success "ربات راه‌اندازی شد!"
 
-  # ── منتظر آماده شدن سرور ─────────────────────────────────
-  info "منتظر آماده شدن سرور (حداکثر ۳۰ ثانیه)..."
+  # ── ثبت Webhook مستقیماً از طریق Telegram API ─────────────
+  # (نیازی به بالا بودن ربات ندارد — Nginx+SSL کافی است)
+  info "ثبت Webhook در تلگرام..."
+  sleep 3  # کمی صبر می‌کنیم تا Nginx کاملاً آماده شود
+
+  WH_RESULT=$(curl -sf --connect-timeout 15 \
+    "https://api.telegram.org/bot${TG_TOKEN_LIVE}/setWebhook" \
+    --data-urlencode "url=https://${DOMAIN}/webhook/${TG_TOKEN_LIVE}" \
+    --data-urlencode "secret_token=${WH_SECRET}" \
+    -d "drop_pending_updates=true" \
+    -d 'allowed_updates=["message","callback_query","chat_member"]' 2>&1 || echo '{"ok":false,"description":"curl error"}')
+
+  if echo "$WH_RESULT" | grep -q '"ok":true'; then
+    success "Webhook تلگرام ثبت شد ✓"
+  else
+    warn "ثبت webhook: $WH_RESULT"
+    warn "برای ثبت دستی اجرا کنید:"
+    warn "  curl 'https://api.telegram.org/bot${TG_TOKEN_LIVE}/setWebhook?url=https://${DOMAIN}/webhook/${TG_TOKEN_LIVE}'"
+  fi
+
+  # ── بررسی وضعیت ربات ─────────────────────────────────────
+  info "بررسی وضعیت ربات..."
   READY=0
   for i in $(seq 1 15); do
     curl -sf "http://127.0.0.1:8080/health" > /dev/null 2>&1 && READY=1 && break
     sleep 2
   done
-
-  # ── ثبت Webhook ──────────────────────────────────────────
-  if [[ $READY -eq 1 && -n "$TG_TOKEN_LIVE" ]]; then
-    WH_RESULT=$(curl -sf \
-      "https://api.telegram.org/bot${TG_TOKEN_LIVE}/setWebhook" \
-      --data-urlencode "url=https://${DOMAIN}/webhook/${TG_TOKEN_LIVE}" \
-      --data-urlencode "secret_token=${WH_SECRET}" \
-      -d "drop_pending_updates=true" \
-      -d 'allowed_updates=["message","callback_query","chat_member"]' \
-      2>&1 || echo '{"ok":false}')
-
-    if echo "$WH_RESULT" | grep -q '"ok":true'; then
-      success "Webhook تلگرام ثبت شد ✓"
-    else
-      warn "ثبت webhook شکست خورد: $WH_RESULT"
-    fi
+  if [[ $READY -eq 1 ]]; then
+    success "ربات فعال و پاسخگوست ✓"
   else
-    warn "سرور آماده نشد — webhook را دستی ثبت کنید."
+    warn "ربات هنوز آماده نشده — لاگ را بررسی کنید:"
+    warn "  sudo journalctl -u $SERVICE -n 30"
   fi
 fi
 
@@ -336,23 +377,15 @@ printf "  %-26s %s\n" "مسیر نصب:"      "$INSTALL_DIR"
 printf "  %-26s %s\n" "فایل تنظیمات:" "$ENV"
 printf "  %-26s %s\n" "آدرس:"          "https://${DOMAIN}"
 echo ""
-
 echo -e "  ${YELLOW}⚠️  مرحله باقی‌مانده — Google Drive API:${NC}"
-echo "  برای فعال‌سازی آپلود به Drive، باید App Credentials را در .env تنظیم کنید:"
 echo ""
 echo -e "  ${BOLD}۱. به Google Cloud Console بروید:${NC}"
 echo "     https://console.cloud.google.com"
 echo "  ۲. پروژه بسازید → Drive API را فعال کنید"
 echo "  ۳. OAuth 2.0 Credentials بسازید (نوع: Web application)"
 echo -e "  ۴. Redirect URI اضافه کنید: ${CYAN}https://${DOMAIN}/oauth/callback${NC}"
-echo "  ۵. Client ID و Secret را در .env بنویسید:"
-echo ""
-echo -e "  ${CYAN}sudo nano $ENV${NC}"
-echo ""
-echo "     GOOGLE_CLIENT_ID=your_client_id.apps.googleusercontent.com"
-echo "     GOOGLE_CLIENT_SECRET=your_client_secret"
-echo ""
-echo -e "  سپس ربات را ری‌استارت کنید: ${CYAN}sudo systemctl restart $SERVICE${NC}"
+echo "  ۵. Client ID و Secret را در پنل ادمین ربات وارد کنید:"
+echo -e "     ${CYAN}/admin → ⚙️ تنظیمات OAuth گوگل${NC}"
 echo ""
 hr
 echo "  دستورات مدیریت:"

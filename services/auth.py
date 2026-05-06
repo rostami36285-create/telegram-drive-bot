@@ -1,34 +1,62 @@
+from __future__ import annotations
+
+import asyncio
+from functools import partial
+
 from google_auth_oauthlib.flow import Flow
 from google.oauth2.credentials import Credentials
 from google.auth.transport.requests import Request
+
+import database.db as db
 from config import GOOGLE_CLIENT_ID, GOOGLE_CLIENT_SECRET, OAUTH_REDIRECT_URI
 
 SCOPES = ["https://www.googleapis.com/auth/drive.file"]
 
-_CLIENT_CONFIG = {
-    "web": {
-        "client_id": GOOGLE_CLIENT_ID,
-        "client_secret": GOOGLE_CLIENT_SECRET,
-        "auth_uri": "https://accounts.google.com/o/oauth2/auth",
-        "token_uri": "https://oauth2.googleapis.com/token",
-        "redirect_uris": [OAUTH_REDIRECT_URI],
+
+async def _get_client_config() -> dict:
+    """Load client credentials from DB first, fall back to .env."""
+    client_id = await db.get_app_setting("google_client_id", encrypted=True) or GOOGLE_CLIENT_ID
+    client_secret = await db.get_app_setting("google_client_secret", encrypted=True) or GOOGLE_CLIENT_SECRET
+    return {
+        "web": {
+            "client_id": client_id,
+            "client_secret": client_secret,
+            "auth_uri": "https://accounts.google.com/o/oauth2/auth",
+            "token_uri": "https://oauth2.googleapis.com/token",
+            "redirect_uris": [OAUTH_REDIRECT_URI],
+        }
     }
-}
 
 
-def _flow() -> Flow:
-    return Flow.from_client_config(_CLIENT_CONFIG, scopes=SCOPES, redirect_uri=OAUTH_REDIRECT_URI)
+async def has_oauth_config() -> bool:
+    """True if client_id and client_secret are available (DB or .env)."""
+    client_id = await db.get_app_setting("google_client_id", encrypted=True) or GOOGLE_CLIENT_ID
+    client_secret = await db.get_app_setting("google_client_secret", encrypted=True) or GOOGLE_CLIENT_SECRET
+    return bool(client_id and client_secret)
 
 
-def get_auth_url(state: str) -> str:
-    flow = _flow()
+def _make_flow(config: dict) -> Flow:
+    return Flow.from_client_config(config, scopes=SCOPES, redirect_uri=OAUTH_REDIRECT_URI)
+
+
+async def get_auth_url(state: str) -> str:
+    config = await _get_client_config()
+    loop = asyncio.get_running_loop()
+    flow = await loop.run_in_executor(None, partial(_make_flow, config))
     url, _ = flow.authorization_url(access_type="offline", state=state, prompt="consent")
     return url
 
 
-def exchange_code(code: str) -> dict:
-    flow = _flow()
-    flow.fetch_token(code=code)
+async def exchange_code(code: str) -> dict:
+    config = await _get_client_config()
+    loop = asyncio.get_running_loop()
+    flow = await loop.run_in_executor(None, partial(_make_flow, config))
+
+    def _fetch(f: Flow) -> Flow:
+        f.fetch_token(code=code)
+        return f
+
+    flow = await loop.run_in_executor(None, _fetch, flow)
     return _to_dict(flow.credentials)
 
 

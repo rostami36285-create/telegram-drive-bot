@@ -6,8 +6,8 @@ from telegram import Update
 from telegram.ext import ContextTypes
 
 import database.db as db
-from bot.keyboards import admin_menu, admin_user_actions, channels_manage, main_menu, back_to_menu
-from bot.states import IDLE, ADMIN_SEARCH, ADMIN_ADD_CHANNEL
+from bot.keyboards import admin_menu, admin_user_actions, channels_manage, main_menu, back_to_menu, oauth_settings_menu, admin_users_kb
+from bot.states import IDLE, ADMIN_SEARCH, ADMIN_ADD_CHANNEL, ADMIN_SET_GOOGLE_ID, ADMIN_SET_GOOGLE_SECRET
 from config import ADMIN_IDS
 
 logger = logging.getLogger(__name__)
@@ -78,6 +78,10 @@ async def admin_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
             reply_markup=admin_menu(),
         )
 
+    elif action.startswith("admin:users:"):
+        offset = int(action.split(":", 2)[2])
+        await _show_user_list(query, offset)
+
     elif action == "admin:channels":
         await _show_channels(query)
 
@@ -98,9 +102,65 @@ async def admin_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await db.remove_required_channel(channel_id)
         await _show_channels(query, notice=f"✅ کانال `{channel_id}` حذف شد.")
 
+    elif action == "admin:oauth":
+        await _show_oauth_settings(query)
+
+    elif action == "admin:oauth_set_id":
+        context.user_data["state"] = ADMIN_SET_GOOGLE_ID
+        await query.edit_message_text(
+            "⚙️ **تنظیم Google Client ID**\n\n"
+            "مقدار `client_id` را از Google Cloud Console کپی کرده و بفرستید:\n"
+            "_(معمولاً به `.apps.googleusercontent.com` ختم می‌شود)_",
+            parse_mode="Markdown",
+            reply_markup=back_to_menu(),
+        )
+
+    elif action == "admin:oauth_set_secret":
+        context.user_data["state"] = ADMIN_SET_GOOGLE_SECRET
+        await query.edit_message_text(
+            "⚙️ **تنظیم Google Client Secret**\n\n"
+            "مقدار `client_secret` را از Google Cloud Console کپی کرده و بفرستید:",
+            parse_mode="Markdown",
+            reply_markup=back_to_menu(),
+        )
+
+    elif action == "admin:oauth_test":
+        await query.edit_message_text("🔄 در حال تست اتصال...")
+        await _test_oauth(query)
+        return
+
+    elif action == "admin:oauth_clear":
+        await db.delete_app_setting("google_client_id")
+        await db.delete_app_setting("google_client_secret")
+        await _show_oauth_settings(query, notice="🗑 اعتبارنامه‌های OAuth حذف شدند.")
+
     elif action == "admin:menu":
         context.user_data["state"] = IDLE
         await query.edit_message_text("🛡 **پنل مدیریت**", parse_mode="Markdown", reply_markup=admin_menu())
+
+
+async def _show_user_list(query, offset: int = 0):
+    _PAGE = 15
+    total = await db.get_total_users()
+    users = await db.get_all_users(limit=_PAGE, offset=offset)
+
+    page = offset // _PAGE + 1
+    total_pages = max(1, (total + _PAGE - 1) // _PAGE)
+    lines = [f"👥 *لیست کاربران* (صفحه {page}/{total_pages} — کل: {total})\n"]
+
+    for u in users:
+        blocked = "🚫" if u["is_blocked"] else "✅"
+        uname = f"@{u['username']}" if u["username"] else "—"
+        lines.append(
+            f"{blocked} `{u['user_id']}` — {u['first_name']} {u['last_name'] or ''} "
+            f"({uname}) — {u['total_uploads']} آپلود"
+        )
+
+    await query.edit_message_text(
+        "\n".join(lines),
+        parse_mode="Markdown",
+        reply_markup=admin_users_kb(offset, total, _PAGE),
+    )
 
 
 async def _show_channels(query, notice: str = ""):
@@ -121,6 +181,113 @@ async def _show_channels(query, notice: str = ""):
         header,
         parse_mode="Markdown",
         reply_markup=channels_manage(channels),
+    )
+
+
+async def _test_oauth(query):
+    from services.auth import get_auth_url, has_oauth_config
+    from config import GOOGLE_CLIENT_ID, GOOGLE_CLIENT_SECRET
+    try:
+        if not await has_oauth_config():
+            await query.edit_message_text(
+                "❌ Client ID یا Client Secret تنظیم نشده است.",
+                reply_markup=back_to_menu(),
+            )
+            return
+        # Try to generate a real auth URL — this validates credentials format
+        test_url = await get_auth_url("__admin_test__")
+        db_id = await db.get_app_setting("google_client_id", encrypted=True)
+        source = "دیتابیس" if db_id else "فایل .env"
+        short_url = test_url[:60] + "..." if len(test_url) > 60 else test_url
+        await query.edit_message_text(
+            "✅ *تست اتصال موفق!*\n\n"
+            f"منبع اعتبارنامه: {source}\n"
+            f"URL تولید شد:\n`{short_url}`\n\n"
+            "اعتبارنامه‌ها به‌درستی پیکربندی شده‌اند.\n"
+            "کاربران می‌توانند Drive خود را متصل کنند.",
+            parse_mode="Markdown",
+            reply_markup=back_to_menu(),
+        )
+    except Exception as e:
+        await query.edit_message_text(
+            f"❌ *تست شکست خورد:*\n\n`{e}`\n\n"
+            "Client ID یا Client Secret نامعتبر است.",
+            parse_mode="Markdown",
+            reply_markup=back_to_menu(),
+        )
+
+
+async def _show_oauth_settings(query, notice: str = ""):
+    from config import GOOGLE_CLIENT_ID, GOOGLE_CLIENT_SECRET
+    db_id = await db.get_app_setting("google_client_id", encrypted=True)
+    db_secret = await db.get_app_setting("google_client_secret", encrypted=True)
+    has_id = bool(db_id or GOOGLE_CLIENT_ID)
+    has_secret = bool(db_secret or GOOGLE_CLIENT_SECRET)
+
+    source_id = "دیتابیس" if db_id else ("فایل .env" if GOOGLE_CLIENT_ID else "—")
+    source_secret = "دیتابیس" if db_secret else ("فایل .env" if GOOGLE_CLIENT_SECRET else "—")
+
+    text = (
+        "⚙️ **تنظیمات OAuth گوگل**\n\n"
+        f"🔑 Client ID: {'✅ موجود' if has_id else '❌ تنظیم نشده'} _(منبع: {source_id})_\n"
+        f"🔐 Client Secret: {'✅ موجود' if has_secret else '❌ تنظیم نشده'} _(منبع: {source_secret})_\n\n"
+        "اعتبارنامه‌های ذخیره‌شده در دیتابیس اولویت دارند و بدون ری‌استارت فعال می‌شوند."
+    )
+    if notice:
+        text = f"{notice}\n\n{text}"
+
+    await query.edit_message_text(
+        text,
+        parse_mode="Markdown",
+        reply_markup=oauth_settings_menu(has_id, has_secret),
+    )
+
+
+async def handle_admin_set_google_id(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if context.user_data.get("state") != ADMIN_SET_GOOGLE_ID:
+        return
+    if not _is_admin(update.effective_user.id):
+        return
+
+    value = update.message.text.strip()
+    if not value or len(value) < 10:
+        await update.message.reply_text(
+            "❌ مقدار وارد‌شده معتبر نیست. لطفاً دوباره امتحان کنید.",
+            reply_markup=back_to_menu(),
+        )
+        return
+
+    await db.set_app_setting("google_client_id", value, encrypted=True)
+    context.user_data["state"] = IDLE
+    await update.message.reply_text(
+        "✅ **Client ID با موفقیت ذخیره شد.**\n\n"
+        "تنظیمات جدید فوری اعمال می‌شوند — نیازی به ری‌استارت نیست.",
+        parse_mode="Markdown",
+        reply_markup=admin_menu(),
+    )
+
+
+async def handle_admin_set_google_secret(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if context.user_data.get("state") != ADMIN_SET_GOOGLE_SECRET:
+        return
+    if not _is_admin(update.effective_user.id):
+        return
+
+    value = update.message.text.strip()
+    if not value or len(value) < 6:
+        await update.message.reply_text(
+            "❌ مقدار وارد‌شده معتبر نیست. لطفاً دوباره امتحان کنید.",
+            reply_markup=back_to_menu(),
+        )
+        return
+
+    await db.set_app_setting("google_client_secret", value, encrypted=True)
+    context.user_data["state"] = IDLE
+    await update.message.reply_text(
+        "✅ **Client Secret با موفقیت ذخیره شد.**\n\n"
+        "تنظیمات جدید فوری اعمال می‌شوند — نیازی به ری‌استارت نیست.",
+        parse_mode="Markdown",
+        reply_markup=admin_menu(),
     )
 
 
