@@ -13,13 +13,25 @@ from .upload import (
     quality_callback,
 )
 from .files import files_callback, file_delete_callback
+from .tutorial import (
+    tutorial_callback, tutorial_admin_callback, tutorial_admin_add_callback,
+    tutorial_list_callback, tutorial_del_callback, handle_admin_tutorial_media,
+)
+from .software import (
+    software_os_callback, software_list_callback,
+    software_admin_callback, software_admin_platform_callback,
+    software_admin_add_callback, software_del_callback, handle_admin_sw_file,
+)
 from .admin import (
     admin_command, admin_callback,
     handle_admin_search, handle_admin_add_channel,
     handle_admin_set_google_id, handle_admin_set_google_secret,
 )
 from bot.keyboards import main_menu
-from bot.states import IDLE, ADMIN_SET_GOOGLE_ID, ADMIN_SET_GOOGLE_SECRET
+from bot.states import (
+    IDLE, ADMIN_SET_GOOGLE_ID, ADMIN_SET_GOOGLE_SECRET,
+    ADMIN_TUTORIAL_ADD, ADMIN_SW_ADD,
+)
 
 _CANCEL_KB = InlineKeyboardMarkup(
     [[InlineKeyboardButton("❌ لغو آپلود", callback_data="cancel_upload")]]
@@ -86,21 +98,36 @@ def register(app: Application):
     app.add_handler(CallbackQueryHandler(disconnect_drive_callback,   pattern="^disconnect_drive$"))
     app.add_handler(CallbackQueryHandler(upload_link_callback,        pattern="^upload_link$"))
     app.add_handler(CallbackQueryHandler(upload_file_callback,        pattern="^upload_file$"))
-    app.add_handler(CallbackQueryHandler(quality_callback,            pattern="^yt_q:"))
-    app.add_handler(CallbackQueryHandler(files_callback,              pattern="^files:"))
-    app.add_handler(CallbackQueryHandler(file_delete_callback,        pattern="^file:del:"))
-    app.add_handler(CallbackQueryHandler(admin_callback,              pattern="^admin:"))
+    app.add_handler(CallbackQueryHandler(quality_callback,                  pattern="^yt_q:"))
+    app.add_handler(CallbackQueryHandler(files_callback,                    pattern="^files:"))
+    app.add_handler(CallbackQueryHandler(file_delete_callback,              pattern="^file:del:"))
+    # Tutorial
+    app.add_handler(CallbackQueryHandler(tutorial_callback,                 pattern="^tutorial$"))
+    app.add_handler(CallbackQueryHandler(tutorial_admin_callback,           pattern="^tutorial:admin$"))
+    app.add_handler(CallbackQueryHandler(tutorial_admin_add_callback,       pattern="^tutorial:admin:add$"))
+    app.add_handler(CallbackQueryHandler(tutorial_list_callback,            pattern="^tutorial:admin:list$"))
+    app.add_handler(CallbackQueryHandler(tutorial_del_callback,             pattern="^tutorial:admin:del:"))
+    # Software
+    app.add_handler(CallbackQueryHandler(software_os_callback,              pattern="^sw:os$"))
+    app.add_handler(CallbackQueryHandler(software_list_callback,            pattern="^sw:list:"))
+    app.add_handler(CallbackQueryHandler(software_admin_callback,           pattern="^sw:admin$"))
+    app.add_handler(CallbackQueryHandler(software_admin_platform_callback,  pattern="^sw:admin:platform:"))
+    app.add_handler(CallbackQueryHandler(software_admin_add_callback,       pattern="^sw:admin:add:"))
+    app.add_handler(CallbackQueryHandler(software_del_callback,             pattern="^sw:admin:del:"))
+    # Admin (generic — must come last)
+    app.add_handler(CallbackQueryHandler(admin_callback,                    pattern="^admin:"))
 
     # Text messages — route by state
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, _route_text))
 
-    # File messages — all media types
+    # File/media messages — route by state
     app.add_handler(MessageHandler(
         (
             filters.Document.ALL | filters.VIDEO | filters.AUDIO |
-            filters.PHOTO | filters.VOICE | filters.VIDEO_NOTE
+            filters.PHOTO | filters.VOICE | filters.VIDEO_NOTE |
+            filters.ANIMATION
         ) & ~filters.COMMAND,
-        handle_file_message,
+        _route_media,
     ))
 
 
@@ -116,3 +143,13 @@ async def _route_text(update, context):
         await handle_admin_set_google_id(update, context)
     elif state == ADMIN_SET_GOOGLE_SECRET:
         await handle_admin_set_google_secret(update, context)
+
+
+async def _route_media(update, context):
+    state = context.user_data.get("state", IDLE)
+    if state == ADMIN_TUTORIAL_ADD:
+        await handle_admin_tutorial_media(update, context)
+    elif state == ADMIN_SW_ADD:
+        await handle_admin_sw_file(update, context)
+    else:
+        await handle_file_message(update, context)

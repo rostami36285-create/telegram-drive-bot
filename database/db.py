@@ -68,6 +68,27 @@ async def init_db():
                 value       TEXT NOT NULL,
                 updated_at  TIMESTAMP DEFAULT CURRENT_TIMESTAMP
             );
+
+            CREATE TABLE IF NOT EXISTS tutorial_media (
+                id            INTEGER PRIMARY KEY AUTOINCREMENT,
+                file_id       TEXT    NOT NULL,
+                file_type     TEXT    NOT NULL,
+                caption       TEXT    DEFAULT '',
+                display_order INTEGER DEFAULT 0,
+                created_at    TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            );
+
+            CREATE TABLE IF NOT EXISTS software_files (
+                id            INTEGER PRIMARY KEY AUTOINCREMENT,
+                platform      TEXT    NOT NULL,
+                file_id       TEXT    NOT NULL,
+                file_type     TEXT    NOT NULL,
+                name          TEXT    NOT NULL DEFAULT '',
+                filename      TEXT    DEFAULT '',
+                caption       TEXT    DEFAULT '',
+                display_order INTEGER DEFAULT 0,
+                created_at    TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            );
         """)
 
         # Purge stale OAuth states
@@ -402,4 +423,81 @@ async def set_app_setting(key: str, value: str, *, encrypted: bool = False):
 async def delete_app_setting(key: str):
     async with aiosqlite.connect(DATABASE_PATH) as db:
         await db.execute("DELETE FROM app_settings WHERE key=?", (key,))
+        await db.commit()
+
+
+# ── Tutorial media ────────────────────────────────────────────
+
+async def add_tutorial_media(file_id: str, file_type: str, caption: str = "") -> int:
+    async with aiosqlite.connect(DATABASE_PATH) as db:
+        async with db.execute("SELECT COALESCE(MAX(display_order),0)+1 FROM tutorial_media") as cur:
+            order = (await cur.fetchone())[0]
+        cur2 = await db.execute(
+            "INSERT INTO tutorial_media (file_id, file_type, caption, display_order) VALUES (?,?,?,?)",
+            (file_id, file_type, caption, order),
+        )
+        await db.commit()
+        return cur2.lastrowid
+
+
+async def get_tutorial_media() -> list[dict]:
+    async with aiosqlite.connect(DATABASE_PATH) as db:
+        db.row_factory = aiosqlite.Row
+        async with db.execute("SELECT * FROM tutorial_media ORDER BY display_order") as cur:
+            return [dict(r) for r in await cur.fetchall()]
+
+
+async def count_tutorial_media() -> int:
+    async with aiosqlite.connect(DATABASE_PATH) as db:
+        async with db.execute("SELECT COUNT(*) FROM tutorial_media") as cur:
+            return (await cur.fetchone())[0]
+
+
+async def delete_tutorial_media(item_id: int):
+    async with aiosqlite.connect(DATABASE_PATH) as db:
+        await db.execute("DELETE FROM tutorial_media WHERE id=?", (item_id,))
+        await db.commit()
+
+
+# ── Software files ────────────────────────────────────────────
+
+async def add_software_file(
+    platform: str, file_id: str, file_type: str,
+    name: str, filename: str = "", caption: str = "",
+) -> int:
+    async with aiosqlite.connect(DATABASE_PATH) as db:
+        async with db.execute(
+            "SELECT COALESCE(MAX(display_order),0)+1 FROM software_files WHERE platform=?", (platform,)
+        ) as cur:
+            order = (await cur.fetchone())[0]
+        cur2 = await db.execute(
+            """INSERT INTO software_files
+               (platform, file_id, file_type, name, filename, caption, display_order)
+               VALUES (?,?,?,?,?,?,?)""",
+            (platform, file_id, file_type, name, filename, caption, order),
+        )
+        await db.commit()
+        return cur2.lastrowid
+
+
+async def get_software_files(platform: str) -> list[dict]:
+    async with aiosqlite.connect(DATABASE_PATH) as db:
+        db.row_factory = aiosqlite.Row
+        async with db.execute(
+            "SELECT * FROM software_files WHERE platform=? ORDER BY display_order", (platform,)
+        ) as cur:
+            return [dict(r) for r in await cur.fetchall()]
+
+
+async def get_software_file(file_db_id: int) -> Optional[dict]:
+    async with aiosqlite.connect(DATABASE_PATH) as db:
+        db.row_factory = aiosqlite.Row
+        async with db.execute("SELECT * FROM software_files WHERE id=?", (file_db_id,)) as cur:
+            row = await cur.fetchone()
+            return dict(row) if row else None
+
+
+async def delete_software_file(file_db_id: int):
+    async with aiosqlite.connect(DATABASE_PATH) as db:
+        await db.execute("DELETE FROM software_files WHERE id=?", (file_db_id,))
         await db.commit()

@@ -9,6 +9,10 @@ def main_menu() -> Markup:
             Btn("📤 آپلود فایل", callback_data="upload_file"),
         ],
         [Btn("📁 مدیریت فایل‌های آپلود‌شده", callback_data="files:0")],
+        [
+            Btn("📚 آموزش استفاده", callback_data="tutorial"),
+            Btn("📥 دانلود نرم‌افزار", callback_data="sw:os"),
+        ],
     ])
 
 
@@ -85,6 +89,10 @@ def admin_menu() -> Markup:
         [Btn("👥 لیست کاربران", callback_data="admin:users:0")],
         [Btn("📢 مدیریت کانال‌های اجباری", callback_data="admin:channels")],
         [Btn("⚙️ تنظیمات OAuth گوگل", callback_data="admin:oauth")],
+        [
+            Btn("📚 مدیریت آموزش", callback_data="tutorial:admin"),
+            Btn("📥 مدیریت نرم‌افزار", callback_data="sw:admin"),
+        ],
         [Btn("📊 آمار کلی", callback_data="admin:stats")],
         [Btn("🏠 منوی اصلی", callback_data="main_menu")],
     ])
@@ -130,6 +138,70 @@ def quality_kb(qualities: list[dict]) -> Markup:
     """Inline buttons for YouTube quality selection."""
     rows = [[Btn(q["label"], callback_data=f"yt_q:{i}")] for i, q in enumerate(qualities)]
     rows.append([Btn("❌ انصراف", callback_data="main_menu")])
+    return Markup(rows)
+
+
+_PLATFORM_LABEL = {
+    "android": "🤖 اندروید",
+    "windows": "🪟 ویندوز",
+    "mac": "🍎 مک",
+    "ios": "📱 iOS",
+    "linux": "🐧 لینوکس",
+}
+_PLATFORMS = list(_PLATFORM_LABEL.keys())
+
+
+# ── Tutorial keyboards ────────────────────────────────────────
+
+def tutorial_admin_kb(has_items: bool) -> Markup:
+    rows = [
+        [Btn("➕ افزودن محتوای آموزشی", callback_data="tutorial:admin:add")],
+    ]
+    if has_items:
+        rows.append([Btn("📋 لیست و حذف محتوا", callback_data="tutorial:admin:list")])
+    rows.append([Btn("🔙 بازگشت به پنل ادمین", callback_data="admin:menu")])
+    return Markup(rows)
+
+
+def tutorial_list_kb(items: list[dict]) -> Markup:
+    _icon = {"photo": "🖼", "video": "🎬", "animation": "🎞", "document": "📎"}
+    rows = []
+    for item in items:
+        icon = _icon.get(item["file_type"], "📎")
+        label = item.get("caption") or f"{item['file_type']} #{item['id']}"
+        label = label[:30] + ("…" if len(label) > 30 else "")
+        rows.append([Btn(f"{icon} {label}  🗑", callback_data=f"tutorial:admin:del:{item['id']}")])
+    rows.append([Btn("🔙 بازگشت", callback_data="tutorial:admin")])
+    return Markup(rows)
+
+
+# ── Software keyboards ────────────────────────────────────────
+
+def software_os_kb() -> Markup:
+    """OS selection for users."""
+    return Markup([
+        [Btn(_PLATFORM_LABEL["android"], callback_data="sw:list:android"),
+         Btn(_PLATFORM_LABEL["ios"],     callback_data="sw:list:ios")],
+        [Btn(_PLATFORM_LABEL["windows"], callback_data="sw:list:windows"),
+         Btn(_PLATFORM_LABEL["mac"],     callback_data="sw:list:mac")],
+        [Btn(_PLATFORM_LABEL["linux"],   callback_data="sw:list:linux")],
+        [Btn("🏠 منوی اصلی", callback_data="main_menu")],
+    ])
+
+
+def software_admin_menu_kb() -> Markup:
+    """Admin: pick a platform to manage."""
+    rows = [[Btn(_PLATFORM_LABEL[p], callback_data=f"sw:admin:platform:{p}")] for p in _PLATFORMS]
+    rows.append([Btn("🔙 بازگشت به پنل ادمین", callback_data="admin:menu")])
+    return Markup(rows)
+
+
+def software_admin_platform_kb(platform: str, files: list[dict]) -> Markup:
+    rows = [[Btn("➕ افزودن نرم‌افزار", callback_data=f"sw:admin:add:{platform}")]]
+    for f in files:
+        name = (f["name"] or f["filename"] or "فایل")[:30]
+        rows.append([Btn(f"🗑 {name}", callback_data=f"sw:admin:del:{f['id']}")])
+    rows.append([Btn("🔙 بازگشت", callback_data="sw:admin")])
     return Markup(rows)
 
 
