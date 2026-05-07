@@ -67,14 +67,14 @@ async def files_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     uploads = await db.get_user_uploads(user_id, limit=_PAGE, offset=offset)
 
     quota_line = ""
-    tokens = await db.get_tokens(user_id)
-    if tokens:
-        try:
+    try:
+        tokens = await db.get_tokens(user_id)
+        if tokens:
             loop = asyncio.get_running_loop()
             quota = await loop.run_in_executor(None, get_drive_quota, tokens)
             quota_line = _quota_line(quota)
-        except Exception:
-            pass
+    except Exception:
+        pass
 
     page_num = offset // _PAGE + 1
     total_pages = (total + _PAGE - 1) // _PAGE

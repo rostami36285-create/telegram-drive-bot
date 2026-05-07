@@ -1,6 +1,7 @@
 """Admin panel — only accessible to users listed in ADMIN_IDS."""
 from __future__ import annotations
 
+import html
 import logging
 from telegram import Update
 from telegram.ext import ContextTypes
@@ -146,19 +147,20 @@ async def _show_user_list(query, offset: int = 0):
 
     page = offset // _PAGE + 1
     total_pages = max(1, (total + _PAGE - 1) // _PAGE)
-    lines = [f"👥 *لیست کاربران* (صفحه {page}/{total_pages} — کل: {total})\n"]
+    lines = [f"👥 <b>لیست کاربران</b> (صفحه {page}/{total_pages} — کل: {total})\n"]
 
     for u in users:
         blocked = "🚫" if u["is_blocked"] else "✅"
-        uname = f"@{u['username']}" if u["username"] else "—"
+        uname = f"@{html.escape(u['username'])}" if u["username"] else "—"
+        fname = html.escape(f"{u['first_name']} {u['last_name'] or ''}".strip())
         lines.append(
-            f"{blocked} `{u['user_id']}` — {u['first_name']} {u['last_name'] or ''} "
+            f"{blocked} <code>{u['user_id']}</code> — {fname} "
             f"({uname}) — {u['total_uploads']} آپلود"
         )
 
     await query.edit_message_text(
         "\n".join(lines),
-        parse_mode="Markdown",
+        parse_mode="HTML",
         reply_markup=admin_users_kb(offset, total, _PAGE),
     )
 
