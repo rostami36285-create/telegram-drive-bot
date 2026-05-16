@@ -11,6 +11,7 @@ from pathlib import Path
 from telegram import Bot, InlineKeyboardButton, InlineKeyboardMarkup
 
 import database.db as db
+from bot.keyboards import main_menu as _main_menu
 from services.drive import (
     download_url, download_telegram_file, download_youtube, upload_file,
     is_youtube_url, FileTooLargeError, UploadCancelled,
@@ -106,6 +107,7 @@ class UploadQueue:
                         chat_id=task.chat_id,
                         message_id=task.status_msg_id,
                         parse_mode="HTML",
+                        reply_markup=_main_menu(),
                     )
                 except Exception:
                     pass
@@ -147,14 +149,14 @@ class UploadQueue:
         # Re-check daily limit
         can, used = await db.check_daily_limit(task.user_id, DAILY_UPLOAD_LIMIT)
         if not can:
-            await status(f"❌ محدودیت روزانه ({DAILY_UPLOAD_LIMIT} فایل) پر شده است.\nفردا دوباره امتحان کنید.")
+            await status(f"❌ محدودیت روزانه ({DAILY_UPLOAD_LIMIT} فایل) پر شده است.\nفردا دوباره امتحان کنید.", markup=_main_menu())
             return
 
         # For personal drive, verify token still exists
         if not task.use_public_drive:
             tokens = await db.get_tokens(task.user_id)
             if not tokens:
-                await status("❌ اتصال به گوگل درایو قطع شده. لطفاً /start بزنید و دوباره وصل شوید.")
+                await status("❌ اتصال به گوگل درایو قطع شده. لطفاً /start بزنید و دوباره وصل شوید.", markup=_main_menu())
                 return
         else:
             tokens = None
@@ -198,7 +200,8 @@ class UploadQueue:
                 if size > max_pub:
                     await status(
                         f"❌ حجم فایل ({size / 1024**2:.0f} MB) از سقف درایو عمومی "
-                        f"({PUBLIC_DRIVE_MAX_MB // 1024} GB) بیشتر است."
+                        f"({PUBLIC_DRIVE_MAX_MB // 1024} GB) بیشتر است.",
+                        markup=_main_menu(),
                     )
                     return
 
@@ -216,7 +219,7 @@ class UploadQueue:
 
                 drives = await db.get_active_public_drives()
                 if not drives:
-                    await status("❌ هیچ درایو عمومی فعالی موجود نیست. با ادمین تماس بگیرید.")
+                    await status("❌ هیچ درایو عمومی فعالی موجود نیست. با ادمین تماس بگیرید.", markup=_main_menu())
                     return
 
                 # Sort by free space (most free first)
@@ -289,6 +292,7 @@ class UploadQueue:
                     "⚠️ <i>فایل به دلیل امنیت درایو عمومی به‌صورت زیپ رمزدار تحویل داده شد.</i>\n"
                     f"📊 آپلودهای باقی‌مانده امروز: {remaining}",
                     parse_mode="HTML",
+                    markup=_main_menu(),
                 )
                 return
 
@@ -359,15 +363,16 @@ class UploadQueue:
                 f'⬇️ <a href="{dl_link}">دانلود مستقیم</a>\n\n'
                 f"📊 آپلودهای باقی‌مانده امروز: {remaining}",
                 parse_mode="HTML",
+                markup=_main_menu(),
             )
 
         except UploadCancelled:
-            await status("⏹ آپلود لغو شد.")
+            await status("⏹ آپلود لغو شد.", markup=_main_menu())
         except FileTooLargeError as e:
-            await status(str(e))
+            await status(str(e), markup=_main_menu())
         except Exception as e:
             logger.exception("Upload failed for user %s", task.user_id)
-            await status(f"❌ خطا در آپلود:\n{_html.escape(str(e))}", parse_mode="HTML")
+            await status(f"❌ خطا در آپلود:\n{_html.escape(str(e))}", parse_mode="HTML", markup=_main_menu())
         finally:
             for p in (tmp_path, zip_path):
                 if p and p.exists():

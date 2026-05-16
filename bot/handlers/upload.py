@@ -276,11 +276,15 @@ async def handle_url_message(update: Update, context: ContextTypes.DEFAULT_TYPE)
                 "به محض رسیدن نوبت شروع می‌شود.",
             )
     except AlreadyQueuedError:
-        await status_msg.edit_text("⚠️ یک آپلود از شما در صف است. لطفاً منتظر بمانید.")
+        await status_msg.edit_text(
+            "⚠️ یک آپلود از شما در صف است. لطفاً منتظر بمانید.",
+            reply_markup=main_menu(),
+        )
     except QueueFullError:
         await status_msg.edit_text(
             "⚠️ سرور در حال حاضر پر است.\n"
             "لطفاً چند دقیقه دیگر امتحان کنید.",
+            reply_markup=main_menu(),
         )
 
 
@@ -342,7 +346,10 @@ async def quality_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 f"📋 در صف آپلود هستید.\nموقعیت: {pos}\nکیفیت: {selected['label']}",
             )
     except AlreadyQueuedError:
-        await query.edit_message_text("⚠️ یک آپلود از شما در صف است. لطفاً منتظر بمانید.")
+        await query.edit_message_text(
+            "⚠️ یک آپلود از شما در صف است. لطفاً منتظر بمانید.",
+            reply_markup=main_menu(),
+        )
     except QueueFullError:
         await query.edit_message_text(
             "⚠️ سرور پر است. چند دقیقه دیگر امتحان کنید.",
@@ -491,8 +498,12 @@ async def handle_file_message(update: Update, context: ContextTypes.DEFAULT_TYPE
                 f"📋 در صف آپلود هستید.\nموقعیت: {pos}",
             )
     except AlreadyQueuedError:
-        await status_msg.edit_text("⚠️ یک آپلود از شما در صف است. لطفاً منتظر بمانید.")
+        await status_msg.edit_text(
+            "⚠️ یک آپلود از شما در صف است. لطفاً منتظر بمانید.",
+            reply_markup=main_menu(),
+        )
     except QueueFullError:
         await status_msg.edit_text(
-            "⚠️ سرور در حال حاضر پر است. چند دقیقه دیگر امتحان کنید."
+            "⚠️ سرور در حال حاضر پر است. چند دقیقه دیگر امتحان کنید.",
+            reply_markup=main_menu(),
         )

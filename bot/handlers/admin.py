@@ -30,7 +30,7 @@ def _fmt_size(b: int) -> str:
 
 async def admin_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not _is_admin(update.effective_user.id):
-        await update.message.reply_text("❌ شما دسترسی ادمین ندارید.")
+        await update.message.reply_text("❌ شما دسترسی ادمین ندارید.", reply_markup=main_menu())
         return
     context.user_data["state"] = IDLE
     await update.message.reply_text("🛡 **پنل مدیریت**", parse_mode="Markdown", reply_markup=admin_menu())
