@@ -205,7 +205,7 @@ class UploadQueue:
                 await status("🔒 در حال رمزنگاری فایل...", markup=_CANCEL_KB)
                 password = generate_zip_password()
                 zip_path = tmp_path.with_suffix(tmp_path.suffix + ".zip")
-                await loop.run_in_executor(None, zip_with_password, tmp_path, zip_path, password)
+                await loop.run_in_executor(None, zip_with_password, tmp_path, zip_path, password, filename)
 
                 # Clean original now — only zip needed from here
                 try:

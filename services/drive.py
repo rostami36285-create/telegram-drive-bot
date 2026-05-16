@@ -417,7 +417,7 @@ def generate_zip_password(length: int = 12) -> str:
     return "".join(secrets.choice(alphabet) for _ in range(length))
 
 
-def zip_with_password(src_path: Path, dst_path: Path, password: str) -> None:
+def zip_with_password(src_path: Path, dst_path: Path, password: str, arcname: str | None = None) -> None:
     """Create AES-256 encrypted ZIP using pyzipper."""
     import pyzipper
     with pyzipper.AESZipFile(
@@ -426,4 +426,4 @@ def zip_with_password(src_path: Path, dst_path: Path, password: str) -> None:
         encryption=pyzipper.WZ_AES,
     ) as zf:
         zf.setpassword(password.encode())
-        zf.write(src_path, src_path.name)
+        zf.write(src_path, arcname or src_path.name)
