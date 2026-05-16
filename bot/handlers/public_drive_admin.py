@@ -13,8 +13,6 @@ import database.db as db
 from bot.keyboards import public_drives_admin_kb, back_to_menu
 from bot.states import IDLE, ADMIN_PUBLIC_DRIVE_LABEL
 from config import ADMIN_IDS
-from services.drive import get_drive_quota
-
 logger = logging.getLogger(__name__)
 
 
