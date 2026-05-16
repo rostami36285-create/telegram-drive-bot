@@ -411,6 +411,11 @@ async def handle_file_message(update: Update, context: ContextTypes.DEFAULT_TYPE
         filename = f"video_note_{file_obj.file_unique_id}.mp4"
         file_size = file_obj.file_size or 0
         mime_type = "video/mp4"
+    elif msg.animation:
+        file_obj = msg.animation
+        filename = file_obj.file_name or f"animation_{file_obj.file_unique_id}.gif"
+        file_size = file_obj.file_size or 0
+        mime_type = file_obj.mime_type or "video/mp4"
     else:
         file_obj = None
 

@@ -27,8 +27,8 @@ async def account_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return
 
     has_drive = await db.has_tokens(user_id)
-    can_upload, used_today = await db.check_daily_limit(user_id, 5)
     from config import DAILY_UPLOAD_LIMIT
+    _, used_today = await db.check_daily_limit(user_id, DAILY_UPLOAD_LIMIT)
     remaining = DAILY_UPLOAD_LIMIT - used_today
 
     drive_status = "✅ متصل" if has_drive else "❌ متصل نیست"

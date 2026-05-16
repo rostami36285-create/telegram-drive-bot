@@ -17,6 +17,7 @@ from database.db import init_db
 from bot.handlers import register
 from services.queue import UploadQueue
 from services.cleanup import cleanup_expired_public_uploads
+from services.auth import _get_client_config
 from oauth.server import create_router
 
 logging.basicConfig(
@@ -62,6 +63,10 @@ async def lifespan(_: FastAPI):
 
     await init_db()
     logger.info("Database initialized")
+
+    # Warm up the runtime credential cache from DB so token refresh works
+    # immediately after restart (without waiting for a new OAuth flow).
+    await _get_client_config()
 
     queue = UploadQueue()
 

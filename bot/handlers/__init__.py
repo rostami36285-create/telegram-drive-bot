@@ -34,7 +34,8 @@ from .public_drive_admin import (
 )
 from bot.keyboards import main_menu
 from bot.states import (
-    IDLE, ADMIN_SET_GOOGLE_ID, ADMIN_SET_GOOGLE_SECRET,
+    IDLE, WAIT_URL, ADMIN_SEARCH, ADMIN_ADD_CHANNEL,
+    ADMIN_SET_GOOGLE_ID, ADMIN_SET_GOOGLE_SECRET,
     ADMIN_TUTORIAL_ADD, ADMIN_SW_ADD, ADMIN_PUBLIC_DRIVE_LABEL,
 )
 
@@ -62,8 +63,8 @@ async def _upload_lock(update: Update, context):
         )
     elif update.message:
         await update.message.reply_text(
-            "⏳ *آپلود در حال انجام است*\n\nلطفاً منتظر بمانید یا آن را لغو کنید.",
-            parse_mode="Markdown",
+            "⏳ <b>آپلود در حال انجام است</b>\n\nلطفاً منتظر بمانید یا آن را لغو کنید.",
+            parse_mode="HTML",
             reply_markup=_CANCEL_KB,
         )
     raise ApplicationHandlerStop()
@@ -142,11 +143,11 @@ def register(app: Application):
 
 async def _route_text(update, context):
     state = context.user_data.get("state", IDLE)
-    if state == "wait_url":
+    if state == WAIT_URL:
         await handle_url_message(update, context)
-    elif state == "admin_search":
+    elif state == ADMIN_SEARCH:
         await handle_admin_search(update, context)
-    elif state == "admin_add_channel":
+    elif state == ADMIN_ADD_CHANNEL:
         await handle_admin_add_channel(update, context)
     elif state == ADMIN_SET_GOOGLE_ID:
         await handle_admin_set_google_id(update, context)

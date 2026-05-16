@@ -374,6 +374,7 @@ async def handle_admin_search(update: Update, context: ContextTypes.DEFAULT_TYPE
     results = await db.search_users(query_text)
 
     if not results:
+        context.user_data["state"] = IDLE
         await update.message.reply_text(
             "❌ کاربری یافت نشد.",
             reply_markup=back_to_menu(),
