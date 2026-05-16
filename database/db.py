@@ -232,6 +232,9 @@ async def increment_daily(user_id: int):
 
 # ── Upload records ────────────────────────────────────────────
 
+_UPLOAD_TYPE_COL = {"link": "total_link_ups", "file": "total_file_ups"}
+
+
 async def record_upload(
     user_id: int,
     filename: str,
@@ -243,7 +246,7 @@ async def record_upload(
     public_drive_id: Optional[int] = None,
     expires_at: Optional[str] = None,
 ):
-    col = "total_link_ups" if upload_type == "link" else "total_file_ups"
+    col = _UPLOAD_TYPE_COL.get(upload_type, "total_file_ups")
     async with aiosqlite.connect(DATABASE_PATH) as db:
         await db.execute(
             """INSERT INTO uploads
@@ -403,7 +406,7 @@ async def delete_upload_record(upload_id: int):
             row = await cur.fetchone()
         if not row:
             return
-        col = "total_link_ups" if row["upload_type"] == "link" else "total_file_ups"
+        col = _UPLOAD_TYPE_COL.get(row["upload_type"], "total_file_ups")
         await db.execute(
             f"UPDATE users SET "
             f"total_uploads=MAX(0,total_uploads-1), "

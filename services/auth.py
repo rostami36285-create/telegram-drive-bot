@@ -12,13 +12,22 @@ from config import GOOGLE_CLIENT_ID, GOOGLE_CLIENT_SECRET, OAUTH_REDIRECT_URI
 
 SCOPES = ["https://www.googleapis.com/auth/drive.file"]
 
+# Module-level cache so get_credentials() (sync) can access current app credentials
+# without needing an async call. Updated every time _get_client_config() is called.
+_runtime_client_id: str = GOOGLE_CLIENT_ID
+_runtime_client_secret: str = GOOGLE_CLIENT_SECRET
+
 
 async def _get_client_config() -> dict:
     """Load client credentials from DB first, fall back to .env (ignoring placeholders)."""
+    global _runtime_client_id, _runtime_client_secret
     db_id = await db.get_app_setting("google_client_id", encrypted=True)
     db_secret = await db.get_app_setting("google_client_secret", encrypted=True)
     client_id = (db_id if _is_real(db_id) else None) or (GOOGLE_CLIENT_ID if _is_real(GOOGLE_CLIENT_ID) else "")
     client_secret = (db_secret if _is_real(db_secret) else None) or (GOOGLE_CLIENT_SECRET if _is_real(GOOGLE_CLIENT_SECRET) else "")
+    # Update runtime cache so get_credentials() (sync) always has current secrets
+    _runtime_client_id = client_id
+    _runtime_client_secret = client_secret
     return {
         "web": {
             "client_id": client_id,
@@ -80,13 +89,18 @@ _ALLOWED_TOKEN_URI = "https://oauth2.googleapis.com/token"
 def get_credentials(tokens: dict) -> Credentials:
     if tokens.get("token_uri") != _ALLOWED_TOKEN_URI:
         raise ValueError("token_uri نامعتبر است.")
+    # Prefer runtime app credentials (not stored per-user) to avoid keeping
+    # the Google app client_secret inside user token records.
+    # Falls back to token-stored value for backward compatibility with existing DB rows.
+    client_id = _runtime_client_id or tokens.get("client_id", "")
+    client_secret = _runtime_client_secret or tokens.get("client_secret", "")
     creds = Credentials(
         token=tokens["token"],
         refresh_token=tokens["refresh_token"],
         token_uri=_ALLOWED_TOKEN_URI,
-        client_id=tokens["client_id"],
-        client_secret=tokens["client_secret"],
-        scopes=tokens["scopes"],
+        client_id=client_id,
+        client_secret=client_secret,
+        scopes=tokens.get("scopes", SCOPES),
     )
     if creds.expired and creds.refresh_token:
         creds.refresh(Request())
@@ -94,12 +108,13 @@ def get_credentials(tokens: dict) -> Credentials:
 
 
 def _to_dict(creds: Credentials) -> dict:
+    # Intentionally omit client_secret — it is loaded from runtime config in get_credentials().
+    # Keeping it out of user token records limits exposure if token data is leaked.
     return {
         "token": creds.token,
         "refresh_token": creds.refresh_token,
-        "token_uri": creds.token_uri,
+        "token_uri": _ALLOWED_TOKEN_URI,
         "client_id": creds.client_id,
-        "client_secret": creds.client_secret,
         "scopes": list(creds.scopes) if creds.scopes else SCOPES,
     }
 
