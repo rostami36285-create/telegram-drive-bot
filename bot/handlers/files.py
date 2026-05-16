@@ -44,7 +44,10 @@ def _file_lines(uploads: list[dict], offset: int) -> list[str]:
         date = str(up["uploaded_at"])[:10]
         name = html.escape(up["filename"])
         link = up.get("drive_view_link", "")
-        if link:
+        expired = link == "[منقضی شده]" or up.get("drive_dl_link") == "[منقضی شده]"
+        if expired:
+            lines.append(f"{i}. {icon} {name} — {size} — {date} <i>(منقضی شده)</i>")
+        elif link:
             lines.append(f'{i}. {icon} <a href="{link}">{name}</a> — {size} — {date}')
         else:
             lines.append(f"{i}. {icon} {name} — {size} — {date}")

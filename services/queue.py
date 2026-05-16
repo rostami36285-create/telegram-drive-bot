@@ -19,6 +19,7 @@ from services.drive import (
 
 _DEFAULT_YT_FORMAT = "best[ext=mp4]/bestvideo[ext=mp4]+bestaudio[ext=m4a]/best"
 from config import MAX_CONCURRENT_UPLOADS, MAX_QUEUE_SIZE, DAILY_UPLOAD_LIMIT, PUBLIC_DRIVE_MAX_MB
+from datetime import datetime, timezone, timedelta
 
 logger = logging.getLogger(__name__)
 
@@ -235,6 +236,7 @@ class UploadQueue:
                 await status(f"⬆️ در حال آپلود به درایو عمومی...\n📁 {zip_filename}", markup=_CANCEL_KB)
 
                 file_meta = None
+                used_drive_id = None
                 for _, drive in drive_spaces:
                     try:
                         file_meta, upd_tok = await loop.run_in_executor(
@@ -244,6 +246,7 @@ class UploadQueue:
                                 cancelled_check=lambda: task.cancelled,
                             ),
                         )
+                        used_drive_id = drive["id"]
                         if upd_tok.get("token") != drive["tokens"].get("token"):
                             await db.update_public_drive_tokens(drive["id"], upd_tok)
                         break
@@ -256,10 +259,16 @@ class UploadQueue:
                 if not file_meta:
                     raise RuntimeError("همه درایوهای عمومی ناموفق بودند. لطفاً بعداً امتحان کنید.")
 
+                expires_at = (
+                    datetime.now(timezone.utc) + timedelta(hours=6)
+                ).strftime("%Y-%m-%d %H:%M:%S")
+
                 await db.increment_daily(task.user_id)
                 await db.record_upload(
                     task.user_id, zip_filename, size, task.upload_type,
                     file_meta["id"], file_meta["webViewLink"], file_meta["webContentLink"],
+                    public_drive_id=used_drive_id,
+                    expires_at=expires_at,
                 )
 
                 remaining = DAILY_UPLOAD_LIMIT - used - 1

@@ -103,6 +103,8 @@ async def init_db():
         # Migrations for existing databases
         for migration in [
             "ALTER TABLE oauth_states ADD COLUMN extra TEXT DEFAULT NULL",
+            "ALTER TABLE uploads ADD COLUMN public_drive_id INTEGER DEFAULT NULL",
+            "ALTER TABLE uploads ADD COLUMN expires_at TEXT DEFAULT NULL",
         ]:
             try:
                 await db.execute(migration)
@@ -238,14 +240,18 @@ async def record_upload(
     drive_file_id: str,
     drive_view_link: str,
     drive_dl_link: str,
+    public_drive_id: Optional[int] = None,
+    expires_at: Optional[str] = None,
 ):
     col = "total_link_ups" if upload_type == "link" else "total_file_ups"
     async with aiosqlite.connect(DATABASE_PATH) as db:
         await db.execute(
             """INSERT INTO uploads
-               (user_id, filename, file_size, upload_type, drive_file_id, drive_view_link, drive_dl_link)
-               VALUES (?,?,?,?,?,?,?)""",
-            (user_id, filename, file_size, upload_type, drive_file_id, drive_view_link, drive_dl_link),
+               (user_id, filename, file_size, upload_type, drive_file_id,
+                drive_view_link, drive_dl_link, public_drive_id, expires_at)
+               VALUES (?,?,?,?,?,?,?,?,?)""",
+            (user_id, filename, file_size, upload_type, drive_file_id,
+             drive_view_link, drive_dl_link, public_drive_id, expires_at),
         )
         await db.execute(
             f"""UPDATE users SET
@@ -600,3 +606,49 @@ async def update_public_drive_tokens(drive_id: int, tokens: dict):
 async def is_public_drive_enabled() -> bool:
     val = await get_app_setting("public_drive_enabled")
     return val == "1"
+
+
+async def get_public_drive_by_id(drive_id: int) -> Optional[dict]:
+    async with aiosqlite.connect(DATABASE_PATH) as db:
+        db.row_factory = aiosqlite.Row
+        async with db.execute(
+            "SELECT id, label, is_active, tokens_encrypted FROM public_drives WHERE id=?", (drive_id,)
+        ) as cur:
+            row = await cur.fetchone()
+    if not row:
+        return None
+    d = dict(row)
+    try:
+        d["tokens"] = decrypt(d.pop("tokens_encrypted"))
+    except Exception:
+        d["tokens"] = {}
+    return d
+
+
+async def get_expired_public_uploads() -> list[dict]:
+    """Return uploads that are past their expiry time and belong to a public drive."""
+    async with aiosqlite.connect(DATABASE_PATH) as db:
+        db.row_factory = aiosqlite.Row
+        async with db.execute(
+            """SELECT id, drive_file_id, public_drive_id
+               FROM uploads
+               WHERE public_drive_id IS NOT NULL
+                 AND expires_at IS NOT NULL
+                 AND expires_at <= datetime('now')
+                 AND drive_file_id IS NOT NULL
+                 AND drive_file_id != ''"""
+        ) as cur:
+            return [dict(r) for r in await cur.fetchall()]
+
+
+async def expire_upload(upload_id: int):
+    """Clear Drive file references after deletion — keeps the record for stats."""
+    async with aiosqlite.connect(DATABASE_PATH) as db:
+        await db.execute(
+            """UPDATE uploads
+               SET drive_file_id='', drive_view_link='[منقضی شده]', drive_dl_link='[منقضی شده]',
+                   expires_at=NULL
+               WHERE id=?""",
+            (upload_id,),
+        )
+        await db.commit()

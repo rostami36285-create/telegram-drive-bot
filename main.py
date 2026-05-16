@@ -16,6 +16,7 @@ from config import TELEGRAM_BOT_TOKEN, SERVER_HOST, SERVER_PORT, WEBHOOK_URL, WE
 from database.db import init_db
 from bot.handlers import register
 from services.queue import UploadQueue
+from services.cleanup import cleanup_expired_public_uploads
 from oauth.server import create_router
 
 logging.basicConfig(
@@ -78,6 +79,7 @@ async def lifespan(_: FastAPI):
 
     asyncio.create_task(queue.start(_bot_app.bot))
     asyncio.create_task(_register_webhook())
+    asyncio.create_task(cleanup_expired_public_uploads())
     logger.info("Bot starting in webhook mode → %s", WEBHOOK_URL)
 
     yield
