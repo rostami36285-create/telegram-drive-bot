@@ -133,10 +133,27 @@ success "کد آماده است."
 
 # ── محیط مجازی + وابستگی‌ها ──────────────────────────────────
 VENV="$INSTALL_DIR/venv"
-info "ساخت محیط مجازی Python..."
-"$PY" -m venv "$VENV" || die "ساخت venv شکست خورد."
-"$VENV/bin/pip" install --upgrade pip -q || true
-"$VENV/bin/pip" install -r "$INSTALL_DIR/requirements.txt" -q || \
+
+# اگر venv موجود باشد و با همین نسخه Python کار کند، از بازسازی صرف‌نظر می‌کنیم
+_venv_ok=0
+if [[ -x "$VENV/bin/python3" ]]; then
+  if "$VENV/bin/python3" -c "import sys; sys.exit(0 if sys.version_info>=(3,10) else 1)" 2>/dev/null; then
+    _venv_ok=1
+  fi
+fi
+
+if [[ $_venv_ok -eq 0 ]]; then
+  info "ساخت محیط مجازی Python..."
+  # پوشه venv خراب/ناسازگار را پاک می‌کنیم و از نو می‌سازیم
+  [[ -d "$VENV" ]] && rm -rf "$VENV"
+  "$PY" -m venv "$VENV" || die "ساخت venv شکست خورد."
+  "$VENV/bin/pip" install --upgrade pip -q || true
+else
+  success "محیط مجازی Python موجود است — از بازسازی صرف‌نظر شد."
+fi
+
+info "نصب/به‌روزرسانی وابستگی‌های Python (ممکن است چند دقیقه طول بکشد)..."
+"$VENV/bin/pip" install -r "$INSTALL_DIR/requirements.txt" || \
   die "نصب وابستگی‌های Python شکست خورد."
 success "وابستگی‌های Python نصب شد."
 
